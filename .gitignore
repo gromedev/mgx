@@ -1,0 +1,19 @@
+# ignore
+.vscode/
+.github/
+.DS_Store
+
+# tmp
+bin/
+obj/
+publish/
+*.jsonl
+*.json
+*.zip
+
+# Build output
+module/*.dll
+module/*.pdb
+module/*.json
+module/Dependencies/
+module/.build-hash

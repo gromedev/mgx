@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Mgx.Cmdlets/Mgx.Cmdlets.csproj" />
+    <Project Path="src/Mgx.Engine/Mgx.Engine.csproj" />
+  </Folder>
+</Solution>

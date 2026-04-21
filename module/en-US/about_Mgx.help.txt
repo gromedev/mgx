@@ -1,0 +1,165 @@
+TOPIC
+    about_Mgx
+
+SHORT DESCRIPTION
+    Resilient companion for Microsoft.Graph PowerShell. Adds retry, circuit
+    breaker, rate limiting, streaming pagination, batching, and fan-out to
+    any Graph API endpoint.
+
+LONG DESCRIPTION
+    Mgx is a PowerShell module that extends Microsoft.Graph with production-
+    grade resilience and performance. It reuses your existing Connect-MgGraph
+    authentication and works alongside the Microsoft.Graph SDK, not instead
+    of it.
+
+    Key capabilities:
+
+    Streaming pagination
+        Invoke-MgxRequest returns results to the pipeline as they arrive
+        instead of buffering the entire collection in memory. This keeps
+        memory constant regardless of result set size.
+
+    Fan-out concurrency
+        Pipeline input with {id} template substitution dispatches multiple
+        requests in parallel. Useful for per-entity lookups that would
+        otherwise require an N+1 loop.
+
+    Automatic batching
+        Invoke-MgxBatchRequest bundles up to 20 requests per $batch call,
+        reducing HTTP round-trips for bulk create, update, and delete
+        operations.
+
+    Built-in resilience
+        Every request passes through a Polly pipeline that handles HTTP 429
+        throttling (with Retry-After), transient 5xx errors, circuit
+        breaking, and token-bucket rate limiting. No configuration is
+        required; defaults are tuned for Graph API limits.
+
+    Zero-change SDK resilience
+        Enable-MgxResilience injects the same resilience pipeline into the
+        Microsoft.Graph SDK HTTP transport. Existing scripts that use
+        Get-MgUser, Get-MgGroup, and other SDK cmdlets gain retry, circuit
+        breaker, and rate limiting without any code changes.
+
+    Delta sync
+        Sync-MgxDelta performs incremental delta queries with automatic
+        state file management, returning only changes since the last sync.
+
+    JSONL export
+        Export-MgxCollection streams paginated results directly to a JSONL
+        file on disk, bypassing PSObject overhead. Checkpoint files allow
+        interrupted exports to resume where they left off.
+
+    Relation enrichment
+        Expand-MgxRelation enriches Graph objects with related data via
+        concurrent fan-out, handling both collection and singleton endpoints.
+
+CMDLETS
+    Invoke-MgxRequest
+        General-purpose resilient client for any Microsoft Graph endpoint.
+
+    Invoke-MgxBatchRequest
+        Bundle multiple Graph API requests into $batch calls.
+
+    Export-MgxCollection
+        Stream paginated Graph API results directly to a JSONL file.
+
+    Expand-MgxRelation
+        Enrich Graph objects with related data via concurrent fan-out.
+
+    Sync-MgxDelta
+        Incremental sync via Microsoft Graph delta queries.
+
+    Enable-MgxResilience
+        Inject Polly resilience into the Microsoft.Graph SDK HTTP transport.
+
+    Disable-MgxResilience
+        Remove Polly resilience injection from the Microsoft.Graph SDK.
+
+    Get-MgxResilience
+        Check the current state of resilience injection.
+
+    Set-MgxOption
+        Configure resilience options for all Mgx cmdlets.
+
+    Get-MgxOption
+        Display current resilience and rate limiting configuration.
+
+    Get-MgxTelemetry
+        Return accumulated session telemetry from the resilience pipeline.
+
+RESILIENCE
+    All Mgx cmdlets share a single Polly resilience pipeline composed of
+    four layers:
+
+    Rate limiter (token bucket)
+        Prevents outbound request bursts from triggering Graph API
+        throttling. Default: 200 burst, 50 tokens replenished per second.
+
+    Retry with exponential backoff
+        Retries transient failures (HTTP 429, 500, 502, 503, 504) up to 7
+        times with exponentially increasing delays and jitter. Honors the
+        Retry-After header when present.
+
+    Circuit breaker
+        Opens the circuit after 10% failure ratio over a 30-second
+        sampling window (minimum 40 requests), rejecting requests for
+        15 seconds before retesting. Trips on 500/502/503/504; does not
+        trip on 429.
+
+    Timeout
+        Per-attempt timeout (default 30s) and total timeout across all
+        retries (default 300s) prevent requests from hanging indefinitely.
+
+    The pipeline is shared across all cmdlet invocations within a session.
+    Use Set-MgxOption to tune parameters at runtime.
+
+CONFIGURATION
+    Use Get-MgxOption to inspect the current resilience settings and
+    Set-MgxOption to change them. Only explicitly passed parameters are
+    modified; all others retain their current values.
+
+        Get-MgxOption
+        Set-MgxOption -MaxRetryAttempts 5 -RateLimitBurst 100
+        Set-MgxOption -Reset
+
+    Configurable parameters include rate limit burst and replenish rate,
+    maximum retry count, circuit breaker failure ratio and sampling duration,
+    per-request and total timeout values, and batch item pacing rate
+    (BatchItemsPerSecond, default 20 items/sec).
+
+EXAMPLES
+    Example 1: List all users with streaming pagination
+
+        Connect-MgGraph -Scopes "User.Read.All"
+        Import-Module Mgx
+        Invoke-MgxRequest /users -All -Property displayName,mail
+
+    Example 2: Add resilience to existing Microsoft.Graph scripts
+
+        Connect-MgGraph -Scopes "User.Read.All"
+        Import-Module Mgx
+        Enable-MgxResilience
+        Get-MgUser -All    # now retries on 429/5xx automatically
+
+    Example 3: Fan-out to get managers for multiple users
+
+        $userIds | Invoke-MgxRequest '/users/{id}/manager'
+
+REQUIREMENTS
+    PowerShell 7.5 or later (Core edition, .NET 9 runtime).
+    Microsoft.Graph.Authentication 2.10.0 or later.
+
+SEE ALSO
+    about_Mgx_Tuning
+    Invoke-MgxRequest
+    Invoke-MgxBatchRequest
+    Export-MgxCollection
+    Expand-MgxRelation
+    Sync-MgxDelta
+    Enable-MgxResilience
+    Disable-MgxResilience
+    Get-MgxResilience
+    Set-MgxOption
+    Get-MgxOption
+    Get-MgxTelemetry

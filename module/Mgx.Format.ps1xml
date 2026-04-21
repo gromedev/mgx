@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+
+    <!-- Mgx.User: table view (fits 120-char terminal: 24+36+36+24=120) -->
+    <View>
+      <Name>Mgx.User</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.User</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>displayName</Label><Width>24</Width></TableColumnHeader>
+          <TableColumnHeader><Label>userPrincipalName</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>id</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>mail</Label><Width>24</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>displayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>userPrincipalName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>id</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>mail</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Mgx.Group: table view for group entities -->
+    <View>
+      <Name>Mgx.Group</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Group</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>displayName</Label><Width>40</Width></TableColumnHeader>
+          <TableColumnHeader><Label>id</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>groupTypes</Label><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Label>mailEnabled</Label><Width>12</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>displayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>id</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>($_.groupTypes -join ', ')</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>mailEnabled</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Mgx.Application: table view (fits 120-char terminal: 26+36+36+20=118) -->
+    <View>
+      <Name>Mgx.Application</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Application</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>displayName</Label><Width>26</Width></TableColumnHeader>
+          <TableColumnHeader><Label>appId</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>id</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>signInAudience</Label><Width>20</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>displayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>appId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>id</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>signInAudience</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Mgx.ServicePrincipal: table view (fits 120-char terminal: 26+36+36+22=120) -->
+    <View>
+      <Name>Mgx.ServicePrincipal</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.ServicePrincipal</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>displayName</Label><Width>26</Width></TableColumnHeader>
+          <TableColumnHeader><Label>appId</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>id</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>servicePrincipalType</Label><Width>22</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>displayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>appId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>id</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>servicePrincipalType</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Mgx.DirectoryRole: table view (fits 120-char terminal: 28+36+36+18=118) -->
+    <View>
+      <Name>Mgx.DirectoryRole</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.DirectoryRole</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>displayName</Label><Width>28</Width></TableColumnHeader>
+          <TableColumnHeader><Label>id</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>roleTemplateId</Label><Width>36</Width></TableColumnHeader>
+          <TableColumnHeader><Label>description</Label><Width>18</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>displayName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>id</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>roleTemplateId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>description</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- Invoke-MgxBatchRequest output: table view -->
+    <View>
+      <Name>Mgx.BatchResult</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.BatchResult</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Url</Label><Width>50</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Method</Label><Width>8</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Status</Label><Width>8</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Url</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Method</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Status</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!--
+      Informational cmdlet views use ListControl with Labels for display formatting.
+      PowerShell's formatter drops Labels when multiple ListControl-typed objects
+      share the same output stream (only the first type's Labels render correctly).
+      This is a known PS platform limitation. Each cmdlet renders Labels correctly
+      when run independently, which is the typical usage pattern.
+    -->
+
+    <!-- Export-MgxCollection summary: list view -->
+    <View>
+      <Name>Mgx.ExportResult</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Cmdlets.Models.MgxExportResult</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><Label>Items</Label><PropertyName>ItemCount</PropertyName></ListItem>
+              <ListItem><Label>Output File</Label><PropertyName>OutputFile</PropertyName></ListItem>
+              <ListItem><Label>Duration</Label><PropertyName>Duration</PropertyName></ListItem>
+              <ListItem><Label>Resumed From</Label><PropertyName>ResumedFrom</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <!-- Get-MgxResilience output: list view -->
+    <View>
+      <Name>Mgx.ResilienceState</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Cmdlets.Models.MgxResilienceOutput</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><PropertyName>IsEnabled</PropertyName></ListItem>
+              <ListItem><PropertyName>IsActive</PropertyName></ListItem>
+              <ListItem>
+                <PropertyName>Warning</PropertyName>
+                <ItemSelectionCondition>
+                  <ScriptBlock>-not [string]::IsNullOrEmpty($_.Warning)</ScriptBlock>
+                </ItemSelectionCondition>
+              </ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <!-- Get-MgxOption output: list view -->
+    <View>
+      <Name>Mgx.Option</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Cmdlets.Models.MgxOptionOutput</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><Label>Rate Limit Burst</Label><PropertyName>RateLimitBurst</PropertyName></ListItem>
+              <ListItem><Label>Rate Limit/sec</Label><PropertyName>RateLimitPerSecond</PropertyName></ListItem>
+              <ListItem><Label>No Rate Limit</Label><PropertyName>NoRateLimit</PropertyName></ListItem>
+              <ListItem><Label>Queue Limit</Label><PropertyName>RateLimitQueueLimit</PropertyName></ListItem>
+              <ListItem><Label>Max Retry Attempts</Label><PropertyName>MaxRetryAttempts</PropertyName></ListItem>
+              <ListItem><Label>Max Retry-After (s)</Label><PropertyName>MaxRetryAfterSeconds</PropertyName></ListItem>
+              <ListItem><Label>Total Timeout (s)</Label><PropertyName>TotalTimeoutSeconds</PropertyName></ListItem>
+              <ListItem><Label>Attempt Timeout (s)</Label><PropertyName>AttemptTimeoutSeconds</PropertyName></ListItem>
+              <ListItem><Label>CB Duration (s)</Label><PropertyName>CircuitBreakerDurationSeconds</PropertyName></ListItem>
+              <ListItem><Label>CB Failure Ratio</Label><ScriptBlock>$_.CircuitBreakerFailureRatio.ToString([System.Globalization.CultureInfo]::InvariantCulture)</ScriptBlock></ListItem>
+              <ListItem><Label>CB Min Throughput</Label><PropertyName>CircuitBreakerMinThroughput</PropertyName></ListItem>
+              <ListItem><Label>CB Sampling (s)</Label><PropertyName>CircuitBreakerSamplingDurationSeconds</PropertyName></ListItem>
+              <ListItem><Label>Batch Chunk Concurrency</Label><PropertyName>BatchChunkConcurrency</PropertyName></ListItem>
+              <ListItem><Label>Batch Items/sec</Label><PropertyName>BatchItemsPerSecond</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+    <!-- Get-MgxTelemetry output: list view -->
+    <View>
+      <Name>Mgx.Telemetry</Name>
+      <ViewSelectedBy>
+        <TypeName>Mgx.Cmdlets.Models.MgxTelemetryOutput</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><Label>Requests</Label><PropertyName>Requests</PropertyName></ListItem>
+              <ListItem><Label>Succeeded</Label><PropertyName>Succeeded</PropertyName></ListItem>
+              <ListItem><Label>Failed</Label><PropertyName>Failed</PropertyName></ListItem>
+              <ListItem><Label>Throttle Retries (429)</Label><PropertyName>ThrottleRetries</PropertyName></ListItem>
+              <ListItem><Label>Other Retries (5xx)</Label><PropertyName>OtherRetries</PropertyName></ListItem>
+              <ListItem><Label>Circuit Breaker Trips</Label><PropertyName>CircuitBreakerTrips</PropertyName></ListItem>
+              <ListItem><Label>Rate Limiter Wait (ms)</Label><PropertyName>RateLimiterWaitMs</PropertyName></ListItem>
+              <ListItem><Label>Retry Delay (ms)</Label><PropertyName>RetryDelayMs</PropertyName></ListItem>
+              <ListItem><Label>HTTP Time (ms)</Label><PropertyName>HttpMs</PropertyName></ListItem>
+              <ListItem><Label>Total Elapsed (ms)</Label><PropertyName>TotalElapsedMs</PropertyName></ListItem>
+              <ListItem><Label>Resource Units</Label><PropertyName>ResourceUnitsConsumed</PropertyName></ListItem>
+              <ListItem><Label>Batch Item Throttles</Label><PropertyName>BatchItemThrottles</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

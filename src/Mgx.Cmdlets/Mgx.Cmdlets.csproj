@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Mgx.Cmdlets</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mgx.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management.Automation" Version="7.5.5" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mgx.Engine\Mgx.Engine.csproj" />
+  </ItemGroup>
+
+  <!-- Post-build: auto-stage DLLs into module/ so IDE builds are never stale -->
+  <Target Name="StageModuleOutput" AfterTargets="Build">
+    <PropertyGroup>
+      <ModuleRoot>$(MSBuildThisFileDirectory)..\..\module</ModuleRoot>
+      <DepsDir>$(ModuleRoot)\Dependencies</DepsDir>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(DepsDir)" />
+
+    <!-- Cmdlets + Engine to module root -->
+    <Copy SourceFiles="$(TargetDir)Mgx.Cmdlets.dll" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)Mgx.Engine.dll" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)Mgx.Cmdlets.pdb" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Mgx.Cmdlets.pdb')" />
+    <Copy SourceFiles="$(TargetDir)Mgx.Engine.pdb" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Mgx.Engine.pdb')" />
+    <Copy SourceFiles="$(TargetDir)Mgx.Cmdlets.deps.json" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Mgx.Cmdlets.deps.json')" />
+
+    <!-- ALC-isolated dependencies -->
+    <Copy SourceFiles="$(TargetDir)Polly.Core.dll" DestinationFolder="$(DepsDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Polly.Core.dll')" />
+    <Copy SourceFiles="$(TargetDir)System.Threading.RateLimiting.dll" DestinationFolder="$(DepsDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)System.Threading.RateLimiting.dll')" />
+  </Target>
+
+</Project>
