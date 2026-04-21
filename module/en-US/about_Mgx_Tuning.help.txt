@@ -65,7 +65,7 @@ LARGE TENANT CONFIGURATION
     Default settings are tuned for tenants up to ~10k objects. Larger tenants
     should adjust timeouts, rate limits, and batch pacing.
 
-    Observed throughput (v0.3.0, live tenant):
+    Observed throughput (v1.0.1, live tenant):
 
         Operation                   Objects     Throughput      Notes
         ---------                   -------     ----------      -----

@@ -44,7 +44,7 @@ if (Test-Path $depsJson) {
 
 # Copy third-party dependencies into Dependencies/ (loaded via ALC Resolving handler on first use)
 # Polly.Core and System.Threading.RateLimiting are not in the module root;
-# Mgx.Engine is NOT here - it is loaded via RequiredAssemblies in Mgx.psd1 (see comment there).
+# Mgx.Engine is NOT here - it is loaded via RequiredAssemblies in mgx.psd1 (see comment there).
 New-Item $DepsDir -ItemType Directory -Force | Out-Null
 
 # Copy dependency DLLs that need ALC isolation (Polly, RateLimiting)
@@ -65,7 +65,7 @@ foreach ($dep in $DepsToIsolate) {
 }
 
 # Verify module output is in expected state
-$RequiredRoot = @('Mgx.Cmdlets.dll', 'Mgx.Engine.dll', 'Mgx.psd1', 'Mgx.psm1')
+$RequiredRoot = @('Mgx.Cmdlets.dll', 'Mgx.Engine.dll', 'mgx.psd1', 'mgx.psm1')
 $RequiredDeps = @('Polly.Core.dll', 'System.Threading.RateLimiting.dll')
 
 foreach ($f in $RequiredRoot) {
@@ -99,6 +99,6 @@ $buildStamp | ConvertTo-Json | Set-Content (Join-Path $ModuleRoot '.build-hash')
 Write-Host "`nBuild complete!" -ForegroundColor Green
 Write-Host "Module output: $ModuleRoot" -ForegroundColor Yellow
 Write-Host "`nTo use:" -ForegroundColor Cyan
-Write-Host "  Import-Module '$ModuleRoot/Mgx.psd1'" -ForegroundColor White
+Write-Host "  Import-Module '$ModuleRoot/mgx.psd1'" -ForegroundColor White
 Write-Host "  Connect-MgGraph -Scopes 'User.Read.All'" -ForegroundColor White
 Write-Host "  Invoke-MgxRequest /users -All" -ForegroundColor White

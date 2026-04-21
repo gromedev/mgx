@@ -1,6 +1,6 @@
 @{
-    RootModule        = 'Mgx.psm1'
-    ModuleVersion     = '1.0.1'
+    RootModule        = 'mgx.psm1'
+    ModuleVersion     = '1.0.2'
     GUID              = 'a3f7e8d2-5b4c-4a1e-9f6d-2c8b0e3a7d5f'
     Author            = 'Thomas Maillo Grome'
     CompanyName       = 'Mgx'
@@ -10,7 +10,7 @@
     PowerShellVersion = '7.5'
     CompatiblePSEditions = @('Core')
 
-    FormatsToProcess  = @('Mgx.Format.ps1xml')
+    FormatsToProcess  = @('mgx.Format.ps1xml')
 
     # Pre-load Mgx.Engine.dll so it resolves into the same load context
     # as Mgx.Cmdlets.dll. Without this, MgxTelemetrySummary (a record type
@@ -46,6 +46,10 @@
             LicenseUri   = 'https://github.com/gromedev/mgx/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/gromedev/mgx'
             ReleaseNotes = @'
+v1.0.2
+- Fixed Linux install: renamed module files to lowercase so Install-Module works on case-sensitive filesystems
+- Updated about_Mgx_Tuning version reference
+
 v1.0.1
 - Added tab completion for Uri parameter on all cmdlets
 - Extracted CircuitBreakerMessage protected property on MgxCmdletBase

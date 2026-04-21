@@ -1,6 +1,6 @@
 # Mgx
 
-PowerShell module for Microsoft Graph API. Streams paginated responses, retries on failure, and rate-limits requests using your existing `Connect-MgGraph` auth.
+SDK cmdlets like `Get-MgUser -All` buffer every page in memory, have no retry, no rate limiting, and time out on large tenants. Raw `Invoke-RestMethod` is faster but you build your own pagination, retry, and batching. Mgx gives you the speed of raw REST with resilience you'd never build yourself, using your existing `Connect-MgGraph` auth.
 
 ## Quick start
 
@@ -9,6 +9,12 @@ Install-Module Mgx
 Connect-MgGraph -Scopes "User.Read.All"
 Invoke-MgxRequest /users -All -Property displayName,mail
 ```
+
+## What it does
+
+- **Speed** — streaming pagination, concurrent fan-out, batched writes (up to 20 per HTTP call)
+- **Resilience** — proactive rate limiting, retry with exponential backoff, circuit breaker, per-request and total timeouts
+- **Operations** — JSONL export with checkpoint/resume, delta sync with automatic token management, SDK resilience injection
 
 ## Benchmarks
 
