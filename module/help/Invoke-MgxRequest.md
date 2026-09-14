@@ -26,7 +26,7 @@ Invoke-MgxRequest [-Uri] <String> [-Method <String>] [-Body <Object>] [-Property
 Invoke-MgxRequest [-Uri] <String> [-Method <String>] [-Body <Object>] [-Property <String[]>]
  [-ExpandProperty <String[]>] [-ConsistencyLevel <String>] [-Headers <Hashtable>] [-ApiVersion <String>] [-Raw]
  [-Filter <String>] [-Sort <String[]>] [-Search <String>] [-Skip <Int32>] [-All] [-Top <Int32>]
- [-PageSize <Int32>] [-CountVariable <String>] [-CheckpointPath <String>] [-NoPageSize] [-InputObject <String>]
+ [-PageSize <Int32>] [-CountVariable <String>] [-CheckpointPath <String>] [-NoPageSize] [-InputObject <Object>]
  [-Concurrency <Int32>] [-SkipNotFound] [-SkipForbidden] [-ProgressAction <ActionPreference>] [-WhatIf]
  [-Confirm] [<CommonParameters>]
 ```
@@ -198,7 +198,7 @@ Accept wildcard characters: False
 ```
 
 ### -CheckpointPath
-Path to a JSON checkpoint file for resumable pagination. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion.
+Path to a JSON checkpoint file for resumable pagination. Consulted only by a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds it and ignores it. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, consults the checkpoint like any other. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion. Those writes are gated on their own: -WhatIf reads the file and leaves it exactly as it was, and -Confirm asks about it once per run that consults it, including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value.
 
 ```yaml
 Type: String
@@ -228,7 +228,7 @@ Accept wildcard characters: False
 ```
 
 ### -Confirm
-Prompts you for confirmation before running the cmdlet.
+Prompts before a write and not before a read. POST, PATCH, PUT and DELETE are confirmed - a direct request one prompt at a time, a fan-out over piped IDs one prompt for all of its items - and a GET is sent without a prompt, the same division -WhatIf makes. With -CheckpointPath there is one prompt more, but only on a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable, asked once per run before any page is fetched, covering the saves and the deletes of the checkpoint file itself - including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds the parameter and never reads it, so none of them adds a prompt. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, prompts the same as any other.
 
 ```yaml
 Type: SwitchParameter
@@ -321,7 +321,7 @@ Accept wildcard characters: False
 Pipeline input for fan-out operations. Each value replaces the {id} placeholder in the URI template. Accepts string values or objects with an Id property.
 
 ```yaml
-Type: String
+Type: Object
 Parameter Sets: Pipeline
 Aliases: Id
 
@@ -514,7 +514,7 @@ Accept wildcard characters: False
 ```
 
 ### -WhatIf
-Shows what would happen if the cmdlet runs. The cmdlet is not run.
+Describes the write instead of sending it. Only writes are gated: POST, PATCH, PUT and DELETE, single or fanned out over piped IDs, are described and not sent. Reads are sent - a GET under -WhatIf connects, pages, spends resource units, can be throttled, and emits its objects - which is the PowerShell convention and what makes a dry run under $WhatIfPreference useful, since the gated writes are then previewed against real data. The checkpoint at -CheckpointPath is read and then left alone: a preview resumes from the position it finds, so it sends the same reads the run would rather than paging from the start, and it neither saves over that file nor deletes it, so the resume position is exactly where it was. Invoke-MgxBatchRequest makes the other choice and gates reads too.
 
 ```yaml
 Type: SwitchParameter

@@ -8,7 +8,7 @@
     <!-- CA1416: a large part of the Windows-only .NET surface (SecurityIdentifier, registry,
          WMI) is [SupportedOSPlatform("windows")]. Mgx runs on Linux and macOS, so promoting
          this to an error turns a runtime PlatformNotSupportedException on a non-Windows host
-         into a build failure. -->
+         into a build failure -->
     <WarningsAsErrors>$(WarningsAsErrors);CA1416</WarningsAsErrors>
   </PropertyGroup>
 

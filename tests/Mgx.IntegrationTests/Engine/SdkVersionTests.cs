@@ -28,18 +28,32 @@ public class SdkVersionTests
         return match.Groups[1].Value;
     }
 
-    /// <summary>Walk up from the test binaries until the repository-relative path exists.</summary>
+    /// <summary>The file that marks the repository root.</summary>
+    private const string RepositoryMarker = "Mgx.slnx";
+
+    /// <summary>
+    /// Resolve a repository-relative file under the repository root - the first ancestor of the
+    /// test binaries holding Mgx.slnx. Nothing above that root is consulted, so a module folder
+    /// beside a worktree checked out under it cannot supply the manifest this pins against.
+    /// </summary>
     private static string FindRepositoryFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null)
         {
-            var candidate = Path.Combine(dir.FullName, relativePath);
-            if (File.Exists(candidate)) return candidate;
+            if (File.Exists(Path.Combine(dir.FullName, RepositoryMarker)))
+            {
+                var candidate = Path.Combine(dir.FullName, relativePath);
+                if (File.Exists(candidate)) return candidate;
+
+                throw new FileNotFoundException(
+                    $"Could not locate '{relativePath}' under repository root {dir.FullName}");
+            }
             dir = dir.Parent;
         }
 
-        throw new FileNotFoundException($"Could not locate '{relativePath}' above {AppContext.BaseDirectory}");
+        throw new DirectoryNotFoundException(
+            $"Could not locate {RepositoryMarker} above {AppContext.BaseDirectory}");
     }
 
     [Fact]

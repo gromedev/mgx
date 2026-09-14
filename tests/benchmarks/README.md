@@ -1,6 +1,6 @@
 # Mgx benchmark suite
 
-Reproduces every number in the main README's Benchmarks section. Each script is self-contained; `run.ps1` runs the full suite and regenerates the README tables.
+Reproduces every number in the main README's Benchmarks section. Each script is self-contained; `run.ps1` runs the full suite. The main README's tables are written by hand from what the scripts print - nothing here generates them.
 
 ## Resource units
 
@@ -21,7 +21,10 @@ there is no session telemetry to read - expected, not a failure.
   `~/.mgx-bench/app.json` (`{ tenantId, appId, clientSecret }`) — the app needs
   `User.ReadWrite.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`, `AuditLog.Read.All`
 - A seeded test tenant (~100k users, ~15k groups) for the tenant benchmarks.
-  `06-fault-gauntlet.ps1` needs **no tenant** — it runs against a local mock.
+  `06-fault-gauntlet.ps1`, `16-pathological-gauntlet.ps1` and
+  `17-pathological-environment.ps1` need **no tenant** — they run against a local mock.
+  17 also needs `Az.Accounts` and `PnP.PowerShell` installed: importing them mid-read is
+  the perturbation.
 
 Never point these scripts at a production tenant. Benchmarks 04 and 07 create and delete objects; 07 and 10 deliberately provoke throttling.
 
@@ -44,10 +47,24 @@ Never point these scripts at a production tenant. Benchmarks 04 and 07 create an
 | 13 | `13-resource-unit-rate.ps1` | Sustained RU ceiling vs burst allowance, at held send rates | yes |
 | 14 | `14-pacing-cold-cost.ps1` | What pacing costs a short run that finishes during the ramp | yes |
 | 15 | `15-fanout-concurrency-scaling.ps1` | What `-Concurrency` buys, and whether the connection pool is the ceiling | yes |
+| 16 | `16-pathological-gauntlet.ps1` | Faults that never clear: storm, outage, death mid-body, delayed visibility | no |
+| 17 | `17-pathological-environment.ps1` | What a read does when the session is replaced, or a competing module loaded, under it | no |
+| 18 | `18-spo-latency-clamp.ps1` | Whether SPO stretches drive latency with no 429 and no throttle header - latency-as-pacing-input evidence | yes, with SPO |
 
-11-15 are not in `run.ps1`. 11-13 each deliberately drive the tenant to 429s, so they run
+11-18 are not in `run.ps1`. 11-13 each deliberately drive the tenant to 429s, so they run
 standalone (10 also throttles on purpose, which is why `run.ps1` puts it last). 14 and 15 are
 cheap and answer one question each; they are read on their own rather than as part of a sweep.
+16 and 17 need no tenant, but they are minutes of deliberate pathology and record what each
+stack does rather than a number the README quotes, so they are read on their own too. 17 has
+no pass or fail at all: recovering from a session replaced mid-operation is 2.3.0 work, and
+what it records is the before picture.
+18 is read-only and still not cheap: it holds sustained paced reads against one drive for over
+an hour. It needs the drive named on the command line - `-DriveId` or `-DriveUri /drives/<id>`,
+with no default - a tenant with a SharePoint license, an uncontended machine, and a window
+longer than the hour the clamp is reported to last; it refuses to start rather than measure
+nothing when any of those is missing. Its per-call rows land in
+`results/18-spo-latency-clamp.rows.jsonl` as they are collected, and `-RecordBaseline` promotes
+it only when it is named, since `run.ps1` never runs it.
 
 ## Methodology
 
@@ -59,4 +76,7 @@ cheap and answer one question each; they are read on their own rather than as pa
 - Memory numbers are peak working set sampled at 200ms plus managed-heap delta;
   streaming claims are measured with streaming consumers (piped, never assigned).
 - Results append to `results/<benchmark>.json` with Mgx/SDK/PS versions and a
-  timestamp; the README tables are generated from the latest entries.
+  timestamp. That directory stays local; `run.ps1 -RecordBaseline` promotes the
+  latest entries into the committed `baseline.json`, and `-CompareBaseline`
+  reads a later run against it. The main README's tables are written by hand
+  from the same entries.

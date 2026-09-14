@@ -24,6 +24,21 @@ param(
 Import-MgxLocal
 Connect-MgxBenchmark
 
+# What the tenant is DOCUMENTED to allow, read before the first round measures what it actually
+# allows. Recorded per round beside the measured numbers: the burst allowance and the sustained
+# ceiling only mean something against the budget the tier promises, and the tier is banded on
+# the user count, so the same two numbers off two tenants are two different findings.
+$tenant = Get-BenchTenantFact
+$documented = $tenant.Budget
+if ($documented) {
+    Write-Host ("tenant {0}: {1} users, documented tier {2} ({3}) = {4} RU/s ({5} RU / 10s)" -f `
+        $tenant.TenantId, $documented.UserCount, $documented.Tier, $documented.Band,
+        $documented.RuPerSecond, $documented.RuPer10Seconds)
+}
+else {
+    Write-Host 'documented budget unknown (no user count) - rounds record it as null.'
+}
+
 # Enough ids to avoid hammering one object; requests cycle through them.
 $ids = Get-BenchUserIds -Count 5000
 Write-Host "using $($ids.Count) user ids; $($Rates.Count) round(s) of ${Seconds}s"
@@ -123,6 +138,10 @@ foreach ($rate in $Rates) {
         RuBeforeFirst429 = $okBeforeFirst429   # 1 RU each, so units == successes
         ServedRateAfter429 = $served
         RuHeaderSample   = $ruHeaderSample
+        # The documented tier the two measured numbers above are to be read against.
+        DocumentedBudgetRuPerSecond = $documented?.RuPerSecond
+        DocumentedTier              = $documented?.Tier
+        DocumentedTierBand          = $documented?.Band
     }
 
     if ($null -eq $first429Seconds) {
@@ -140,6 +159,10 @@ foreach ($rate in $Rates) {
 # --- Report -------------------------------------------------------------------------------
 Write-Host ''
 Write-Host "=== RESOURCE-UNIT RATE (1-RU requests, no retry) ==="
+if ($documented) {
+    Write-Host ("documented for this tenant: tier {0}, {1}, {2} RU/s" -f `
+        $documented.Tier, $documented.Band, $documented.RuPerSecond)
+}
 Write-Host ('{0,10} {1,10} {2,9} {3,11} {4,13} {5,15}' -f `
     'Target', 'Achieved', 'Sent', 'First 429', 'RU before it', 'Served after it')
 foreach ($k in $results.Keys) {

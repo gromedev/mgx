@@ -19,11 +19,24 @@ public class OrphanAdoptionTests
         typeof(Mgx.Cmdlets.Base.MgxCmdletBase).GetMethod(
             "CanAdoptOrphanedTemp", BindingFlags.Static | BindingFlags.NonPublic)!;
 
+    /// <summary>
+    /// The two arguments, followed by an empty slot for each out parameter the method carries -
+    /// the temp it picked at 2, the staging failure at 3, what the sweep removed at 4. Sized off
+    /// the method, since reflection wants a slot for every one of them.
+    /// </summary>
+    private static object?[] Slots(MethodInfo method, string outputPath, long itemCount)
+    {
+        var slots = new object?[method.GetParameters().Length];
+        slots[0] = outputPath;
+        slots[1] = itemCount;
+        return slots;
+    }
+
     private static bool Invoke(string outputPath, long itemCount) =>
-        (bool)Adopt.Invoke(null, [outputPath, itemCount])!;
+        (bool)Adopt.Invoke(null, Slots(Adopt, outputPath, itemCount))!;
 
     private static bool InvokeCan(string outputPath, long itemCount) =>
-        (bool)CanAdopt.Invoke(null, [outputPath, itemCount])!;
+        (bool)CanAdopt.Invoke(null, Slots(CanAdopt, outputPath, itemCount))!;
 
     private static string NewDir()
     {

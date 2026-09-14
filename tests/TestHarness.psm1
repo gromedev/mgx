@@ -56,7 +56,8 @@ function Invoke-TestHarness
             Directory to search for *.Tests.ps1. Defaults to tests/Unit.
 
         .OUTPUTS
-            The Pester run object. Callers check $result.FailedCount.
+            The Pester run object. Callers check $result.Result (not 'Passed' when a test
+            failed OR a container could not run) and $result.FailedContainersCount.
     #>
     [CmdletBinding()]
     param
@@ -123,7 +124,19 @@ function Invoke-TestHarness
         Write-Verbose -Message 'Code coverage is not collected for a binary module; continuing without it.'
     }
 
-    return Invoke-Pester -Configuration $configuration
+    $result = Invoke-Pester -Configuration $configuration
+
+    # FailedCount counts tests only. A container that never ran at all - a parse error, a
+    # top-level throw, a dot-sourced helper that is gone - fails the container and leaves
+    # FailedCount at 0, so a caller checking FailedCount alone sees a clean pass. Name it here
+    # so a local run sees it even when the caller only logs the summary line.
+    foreach ($container in $result.FailedContainers)
+    {
+        $firstError = $container.ErrorRecord[0].Exception.Message
+        Write-Warning -Message "Container failed: $($container.Name) - $firstError"
+    }
+
+    return $result
 }
 
 Export-ModuleMember -Function Invoke-TestHarness, Get-MgxTestPath

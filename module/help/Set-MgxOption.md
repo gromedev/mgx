@@ -17,7 +17,8 @@ Set-MgxOption [-RateLimitBurst <Int32>] [-RateLimitPerSecond <Int32>] [-NoRateLi
  [-RateLimitQueueLimit <Int32>] [-MaxRetryAfterSeconds <Int32>] [-MaxRetryAttempts <Int32>]
  [-TotalTimeoutSeconds <Int32>] [-AttemptTimeoutSeconds <Int32>] [-CircuitBreakerDurationSeconds <Int32>]
  [-CircuitBreakerFailureRatio <Double>] [-CircuitBreakerMinThroughput <Int32>]
- [-CircuitBreakerSamplingDurationSeconds <Int32>] [-BatchItemsPerSecond <Int32>] [-Reset] [<CommonParameters>]
+ [-CircuitBreakerSamplingDurationSeconds <Int32>] [-BatchChunkConcurrency <Int32>]
+ [-BatchItemsPerSecond <Int32>] [-Reset] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -133,7 +134,7 @@ Accept wildcard characters: False
 ```
 
 ### -CircuitBreakerMinThroughput
-Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 1-1000. Default: 40.
+Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 2-1000. Default: 40. Two is the least the breaker will hold; a ratio over a single request is not a measurement.
 
 ```yaml
 Type: Int32
@@ -293,6 +294,36 @@ Aliases:
 Required: False
 Position: Named
 Default value: 300
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -WhatIf
+Shows what would happen if the cmdlet runs. The cmdlet is not run. Every path that changes an option - -Reset and each individual parameter alike - sits behind this same check, so nothing is changed under -WhatIf.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases: wi
+
+Required: False
+Position: Named
+Default value: None
+Accept pipeline input: False
+Accept wildcard characters: False
+```
+
+### -Confirm
+Prompts you for confirmation before running the cmdlet.
+
+```yaml
+Type: SwitchParameter
+Parameter Sets: (All)
+Aliases: cf
+
+Required: False
+Position: Named
+Default value: None
 Accept pipeline input: False
 Accept wildcard characters: False
 ```

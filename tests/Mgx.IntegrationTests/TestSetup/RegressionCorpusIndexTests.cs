@@ -5,7 +5,10 @@ namespace Mgx.IntegrationTests;
 /// <summary>
 /// Provenance is only useful if it can be trusted, and a doc comment naming an issue number is
 /// unverifiable on its own. Every issue id written anywhere under tests/ has to have a row in
-/// tests/CORPUS.md saying what it guarantees and where.
+/// the index saying what it guarantees and where. The index itself is private (tmp/CORPUS.md,
+/// untracked), so a host without it - public CI - runs these as counted no-ops: the guard
+/// binds wherever the index lives. Every path here resolves under the repository root - the
+/// directory holding Mgx.slnx - and nothing above that root is ever consulted.
 ///
 /// The guard runs one way only. The reverse - every indexed id has a test - cannot hold while
 /// the index carries rows that name the release bringing their test, which is the honest way to
@@ -13,7 +16,8 @@ namespace Mgx.IntegrationTests;
 /// </summary>
 public class RegressionCorpusIndexTests
 {
-    private const string IndexPath = "tests/CORPUS.md";
+    private const string IndexPath = "tmp/CORPUS.md";
+    private const string RepositoryMarker = "Mgx.slnx";
 
     /// <summary>
     /// Matches an issue id and any ids abbreviated onto it: "M365DSC-5306/7175" is two ids, and
@@ -33,20 +37,50 @@ public class RegressionCorpusIndexTests
         }
     }
 
-    /// <summary>Walk up from the test binaries until the repository-relative path exists.</summary>
-    private static string FindRepositoryPath(string relativePath)
+    /// <summary>
+    /// Walk up from <paramref name="startDirectory"/> to the first ancestor containing
+    /// Mgx.slnx and return it as the repository root. Nothing above that directory is ever
+    /// consulted, so a decoy further up - a worktree's own tmp/, a stranger's tests/ - cannot
+    /// bind.
+    /// </summary>
+    private static string FindRepositoryRoot(string startDirectory)
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        var dir = new DirectoryInfo(startDirectory);
         while (dir != null)
         {
-            var candidate = Path.Combine(dir.FullName, relativePath);
-            if (File.Exists(candidate) || Directory.Exists(candidate)) return candidate;
+            if (File.Exists(Path.Combine(dir.FullName, RepositoryMarker))) return dir.FullName;
             dir = dir.Parent;
         }
 
         throw new DirectoryNotFoundException(
-            $"Could not locate '{relativePath}' above {AppContext.BaseDirectory}");
+            $"Could not locate {RepositoryMarker} above {startDirectory}");
     }
+
+    /// <summary>Resolve a repository-relative path under the root reached from <paramref name="startDirectory"/>.</summary>
+    private static string FindRepositoryPath(string relativePath, string startDirectory)
+    {
+        var root = FindRepositoryRoot(startDirectory);
+        var candidate = Path.Combine(root, relativePath);
+        if (File.Exists(candidate) || Directory.Exists(candidate)) return candidate;
+
+        throw new DirectoryNotFoundException(
+            $"Could not locate '{relativePath}' under repository root {root}");
+    }
+
+    /// <summary>FindRepositoryPath, starting from the test binaries.</summary>
+    private static string FindRepositoryPath(string relativePath) =>
+        FindRepositoryPath(relativePath, AppContext.BaseDirectory);
+
+    /// <summary>FindRepositoryPath for a file allowed to be absent: null instead of a throw.</summary>
+    private static string? TryFindRepositoryPath(string relativePath, string startDirectory)
+    {
+        try { return FindRepositoryPath(relativePath, startDirectory); }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    /// <summary>TryFindRepositoryPath, starting from the test binaries.</summary>
+    private static string? TryFindRepositoryPath(string relativePath) =>
+        TryFindRepositoryPath(relativePath, AppContext.BaseDirectory);
 
     /// <summary>
     /// Every source file under tests/, minus build output, the index itself, and this file - which
@@ -55,9 +89,10 @@ public class RegressionCorpusIndexTests
     private static IEnumerable<string> CorpusSourceFiles()
     {
         var testsRoot = FindRepositoryPath("tests");
+        // The index lives outside tests/ and needs no exclusion; this file carries fabricated
+        // ids on purpose and would otherwise fail its own guard.
         var excluded = new[]
         {
-            Path.GetFullPath(FindRepositoryPath(IndexPath)),
             Path.GetFullPath(FindRepositoryPath(
                 Path.Combine("tests", "Mgx.IntegrationTests", "TestSetup", "RegressionCorpusIndexTests.cs")))
         };
@@ -84,7 +119,8 @@ public class RegressionCorpusIndexTests
     [Fact]
     public void Every_issue_id_under_tests_has_a_row_in_the_index()
     {
-        var indexText = File.ReadAllText(FindRepositoryPath(IndexPath));
+        if (TryFindRepositoryPath(IndexPath) is not string indexFile) return;
+        var indexText = File.ReadAllText(indexFile);
 
         var missing = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
         var claimed = new HashSet<string>(StringComparer.Ordinal);
@@ -122,7 +158,8 @@ public class RegressionCorpusIndexTests
     {
         // What the guard above is worth: an id nobody has indexed has to be reported, including
         // one abbreviated onto an id that IS indexed.
-        var indexText = File.ReadAllText(FindRepositoryPath(IndexPath));
+        if (TryFindRepositoryPath(IndexPath) is not string indexFile) return;
+        var indexText = File.ReadAllText(indexFile);
 
         Assert.Equal(["GraphSDK-9999"],
             Unindexed(indexText, "/// (Corpus: GraphSDK-9999, an issue that does not exist.)"));
@@ -134,8 +171,37 @@ public class RegressionCorpusIndexTests
     [Fact]
     public void The_index_is_where_the_suite_says_it_is()
     {
-        // The file moved from TestSetup/ during 2.1.4. A stale path here would make both guards
-        // above throw rather than fail, which reads as a broken test rather than a broken index.
-        Assert.True(File.Exists(FindRepositoryPath(IndexPath)));
+        // A stale path here would read as an absent index and quietly turn all three guards
+        // into no-ops on every host; a host that carries the index pins the path with this.
+        if (TryFindRepositoryPath("tmp") is not string) return;
+        Assert.True(TryFindRepositoryPath(IndexPath) is not null);
+    }
+
+    [Fact]
+    public void The_walk_up_does_not_cross_the_repository_root()
+    {
+        // A decoy tmp/ sits above the repository root here - the exact shape of a worktree
+        // checked out under the system temp directory, where the walk-up used to resolve the
+        // system temp directory itself as the repository's tmp/. Anchoring on Mgx.slnx means
+        // the decoy is never reached: "tests" resolves under the marked root, and "tmp" - which
+        // exists only above the root - resolves to nothing.
+        var sandbox = Path.Combine(Path.GetTempPath(), $"mgx-corpus-root-test-{Guid.NewGuid():N}");
+        var repoRoot = Path.Combine(sandbox, "repo");
+        var startDirectory = Path.Combine(repoRoot, "tests", "x", "bin", "Debug");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(sandbox, "tmp"));
+            Directory.CreateDirectory(repoRoot);
+            File.WriteAllText(Path.Combine(repoRoot, "Mgx.slnx"), string.Empty);
+            Directory.CreateDirectory(Path.Combine(repoRoot, "tests"));
+            Directory.CreateDirectory(startDirectory);
+
+            Assert.Equal(Path.Combine(repoRoot, "tests"), FindRepositoryPath("tests", startDirectory));
+            Assert.Null(TryFindRepositoryPath("tmp", startDirectory));
+        }
+        finally
+        {
+            Directory.Delete(sandbox, recursive: true);
+        }
     }
 }

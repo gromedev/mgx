@@ -54,6 +54,30 @@ Describe 'Invoke-MgxRequest' {
         (Invoke-MgxRequest /users -All -Top $script:Slice -Property id | Measure-Object).Count |
             Should -Be $script:Slice
     }
+    It 'reaches the beta endpoint under -ApiVersion beta' {
+        (Invoke-MgxRequest /users -ApiVersion beta -Top $script:SmallSlice -Property id | Measure-Object).Count |
+            Should -Be $script:SmallSlice
+    }
+    It 'stamps each entity of an {id} fan-out with the id it came from' {
+        # The only thing that says which piped id produced which object once the fan-out has
+        # interleaved them. Nothing else in the suite asserts the property exists.
+        $ids = @(Invoke-MgxRequest /users -Top $script:SmallSlice -Property id | ForEach-Object { $_.id })
+        $seen = @($ids | Invoke-MgxRequest '/users/{id}' -Property id | ForEach-Object { $_['_MgxSourceId'] })
+        Compare-Object ($ids | Sort-Object) ($seen | Sort-Object) | Should -BeNullOrEmpty
+    }
+    It 'refuses an {id} Uri with nothing piped to it' {
+        { Invoke-MgxRequest '/users/{id}' } | Should -Throw '*pipeline*'
+    }
+    It 'returns the user the SDK returns for the same id' {
+        # Read against the SDK rather than against itself: same tenant, same id, same three
+        # fields. A mock can agree with whatever the test author wrote; the directory cannot.
+        $id  = (Invoke-MgxRequest '/users?$top=1' -Property id -WarningAction SilentlyContinue).id
+        $mgx = Invoke-MgxRequest "/users/$id" -Property id,displayName,userPrincipalName
+        $mg  = Get-MgUser -UserId $id -Property Id,DisplayName,UserPrincipalName
+        $mgx.id                | Should -Be $mg.Id
+        $mgx.displayName       | Should -Be $mg.DisplayName
+        $mgx.userPrincipalName | Should -Be $mg.UserPrincipalName
+    }
 }
 
 Describe 'Invoke-MgxBatchRequest' {

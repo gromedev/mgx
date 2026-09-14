@@ -1,7 +1,7 @@
 <Project>
 
   <PropertyGroup>
-    <Version>2.1.4</Version>
+    <Version>2.1.5</Version>
     <Authors>Thomas Maillo Grome</Authors>
     <Company>Mgx</Company>
     <Copyright>(c) 2026 Thomas Maillo Grome. All rights reserved.</Copyright>

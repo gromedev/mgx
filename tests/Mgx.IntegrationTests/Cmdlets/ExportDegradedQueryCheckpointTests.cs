@@ -190,7 +190,7 @@ public class ExportDegradedQueryCheckpointTests
     }
 
     private static (long? Count, List<string> Warnings) ExportReporting(
-        string outputPath, string checkpointPath, string filter)
+        string outputPath, string checkpointPath, string? filter)
     {
         using var ps = PowerShell.Create();
         ps.AddCommand("Import-Module")
@@ -198,12 +198,12 @@ public class ExportDegradedQueryCheckpointTests
         ps.Invoke();
         ps.Commands.Clear();
 
-        ps.AddCommand("Export-MgxCollection")
-          .AddParameter("Uri", "/users")
-          .AddParameter("OutputFile", outputPath)
-          .AddParameter("CheckpointPath", checkpointPath)
-          .AddParameter("Filter", filter)
-          .AddParameter("All");
+        var cmd = ps.AddCommand("Export-MgxCollection")
+                    .AddParameter("Uri", "/users")
+                    .AddParameter("OutputFile", outputPath)
+                    .AddParameter("CheckpointPath", checkpointPath)
+                    .AddParameter("All");
+        if (filter != null) cmd.AddParameter("Filter", filter);
         long? count = null;
         try
         {
@@ -453,7 +453,8 @@ public class ExportDegradedQueryCheckpointTests
             var (reported, warnings) = ExportReporting(output, checkpoint, filter);
 
             Assert.Contains(warnings, w => w.Contains("Resuming from checkpoint"));
-            Assert.Contains(warnings, w => w.Contains("no longer describes this export"));
+            Assert.Contains(warnings,
+                w => w.Contains("under a form of the request the endpoint has since refused"));
 
             // And the run really did start over, which is what the warning is about.
             Assert.Equal(["{\"id\":\"u1\"}", "{\"id\":\"u2\"}", "{\"id\":\"u3\"}"],
@@ -702,6 +703,195 @@ public class ExportDegradedQueryCheckpointTests
             Assert.Equal(3, reported);
             Assert.False(File.Exists(checkpoint));
             Assert.Empty(Directory.GetFiles(dir, "out.jsonl.*.tmp"));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+    // Ids of unequal width, so a byte count taken from one enumeration and applied to the file
+    // another left lands inside a line rather than on a boundary.
+    //
+    // The collection as the first run below reads it, paged two items and then one. An export
+    // is a snapshot of a collection that goes on changing, and the runs here are minutes apart:
+    // what the skip token names is a position in THIS enumeration, and the byte count beside it
+    // describes the bytes THIS enumeration wrote.
+    private const string GrowingPage1 = """
+    {"value":[{"id":"u1"},{"id":"uu22"}],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?$skiptoken=P2"}
+    """;
+    private const string GrowingPage2 = """
+    {"value":[{"id":"uuu333"}]}
+    """;
+
+    // The same collection with one item created at the front, which is what the runs after the
+    // first enumerate - paged two and two, under a skip token of their own.
+    private const string GrownPage1 = """
+    {"value":[{"id":"a0"},{"id":"u1"}],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?$skiptoken=Q2"}
+    """;
+    private const string GrownPage2 = """
+    {"value":[{"id":"uu22"},{"id":"uuu333"}]}
+    """;
+
+    // And the whole of it in a single page: how the endpoint answers the form of the request it
+    // does not refuse, so the attempt that finishes reaches no page boundary and saves nothing.
+    private const string GrownWholeCollection = """
+    {"value":[{"id":"a0"},{"id":"u1"},{"id":"uu22"},{"id":"uuu333"}]}
+    """;
+
+    private static readonly string[] GrownCollection =
+        ["{\"id\":\"a0\"}", "{\"id\":\"u1\"}", "{\"id\":\"uu22\"}", "{\"id\":\"uuu333\"}"];
+
+    private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
+        new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    /// <summary>What the resumed-link entry <see cref="ProgramGrowingEndpoint"/> arms is called,
+    /// so a run can assert by name that <see cref="MockHttpHandler.UnansweredRules"/> does not
+    /// carry it - it is the one entry that ever answers the refusal these tests inject.</summary>
+    private const string FaultName = "fault-resumed-link";
+
+    /// <summary>
+    /// An endpoint that pages the form of the request carrying <paramref name="refusedOption"/>
+    /// and answers the form without it whole, over a collection that grows once the first run
+    /// is done with it. The refusal lands on the continuation, which is the shape that leaves a
+    /// page-boundary checkpoint on disk before the attempt loop goes round again;
+    /// <paramref name="run"/> says which of the three invocations is talking to it.
+    /// </summary>
+    private static void ProgramGrowingEndpoint(
+        MockHttpHandler handler, string refusedOption, string refusal, Func<int> run)
+    {
+        handler
+            // The position the first run's enumeration handed out. It dies on it; the run that
+            // resumes is refused the option its URL carries; the run after that is answered
+            // from the snapshot the first run was reading.
+            .When(r => r.Uri.Contains("$skiptoken=P2", StringComparison.Ordinal), FaultName)
+                .Respond(_ => run() switch
+                {
+                    1 => Json(HttpStatusCode.InternalServerError, ServerError),
+                    2 => Json(HttpStatusCode.BadRequest, refusal),
+                    _ => Json(HttpStatusCode.OK, GrowingPage2)
+                })
+            // The position the enumeration over the grown collection hands out.
+            .When(r => r.Uri.Contains("$skiptoken=Q2", StringComparison.Ordinal))
+                .Respond(_ => Json(HttpStatusCode.OK, GrownPage2))
+            // Page one of the form the endpoint pages, against the collection as it stands.
+            .When(r => r.Uri.Contains(refusedOption, StringComparison.Ordinal))
+                .Respond(_ => Json(HttpStatusCode.OK, run() == 1 ? GrowingPage1 : GrownPage1))
+            // And the form it does not refuse.
+            .When(_ => true)
+                .Respond(_ => Json(HttpStatusCode.OK, GrownWholeCollection));
+    }
+
+    /// <summary>
+    /// What a rebuilt request leaves at -CheckpointPath, and what the run after it does with
+    /// that. The endpoint refuses $top on the continuation, so the attempt loop goes round with
+    /// a position of this run's already on disk, and the attempt that follows compares it
+    /// against a URL the run has stopped building and refuses it. That refusal says nothing
+    /// about whose the file is: it is this export's own position, into an enumeration this run
+    /// goes on to make again and replace the output with. Kept beside the finished output, it
+    /// is a position nothing comes back to, and the next run over the same command line reads
+    /// it as its own - the completed file cut back to the byte count of an enumeration two runs
+    /// old, and the rest appended from a skip token that counts items it no longer holds.
+    /// </summary>
+    [Fact]
+    public void A_checkpoint_refused_for_a_rebuilt_request_goes_with_the_completed_export()
+    {
+        var dir = NewDir();
+        var output = Path.Combine(dir, "out.jsonl");
+        var checkpoint = Path.Combine(dir, "run.checkpoint");
+        try
+        {
+            var run = 1;
+            var handler = new MockHttpHandler();
+            ProgramGrowingEndpoint(handler, "$top=", TopUnsupported, () => run);
+            using var transport = MgxTransportScope.Inject(handler);
+
+            // Run one: page one collected into a temp under the automatic $top, and the
+            // continuation dies. The checkpoint records that form of the URL and names the temp.
+            var firstResult = Export(output, checkpoint);
+            Assert.DoesNotContain(FaultName, handler.UnansweredRules);
+            Assert.Null(firstResult);
+            var cp = PaginationCheckpoint.Load(checkpoint);
+            Assert.NotNull(cp);
+            Assert.Contains("$top=", cp!.Resource);
+            Assert.NotNull(cp.TempFile);
+
+            // Run two: the temp is promoted and the resume announced, then the continuation
+            // comes back Request_UnsupportedQuery, the URL is rebuilt without $top, and the
+            // form the endpoint answers hands over the whole collection in one page - so the
+            // attempt that finishes never reaches a boundary and saves no checkpoint of its own.
+            run = 2;
+            var (secondCount, secondWarnings) = ExportReporting(output, checkpoint, null);
+
+            Assert.Contains(secondWarnings, w => w.Contains("Resuming from checkpoint"));
+            Assert.Equal(GrownCollection, File.ReadAllLines(output));
+            Assert.Equal(4, secondCount);
+
+            // Taken here and weighed below, because what the file costs is what run three does.
+            var checkpointSurvivedRunTwo = File.Exists(checkpoint);
+
+            // Run three, the same command line, with $top answered again.
+            run = 3;
+            var (thirdCount, thirdWarnings) = ExportReporting(output, checkpoint, null);
+
+            Assert.Equal(GrownCollection, File.ReadAllLines(output));
+            Assert.Equal(4, thirdCount);
+            Assert.DoesNotContain(thirdWarnings,
+                w => w.Contains("resum", StringComparison.OrdinalIgnoreCase));
+            Assert.False(checkpointSurvivedRunTwo,
+                "a completed export left a position into the enumeration it had just replaced");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The same on the other option: a -Filter run auto-adds $count, the continuation comes
+    /// back a bare 400, and the URL is rebuilt without it. The checkpoint the attempt before
+    /// saved is this export's own under the form that carried $count, and the run that refuses
+    /// it goes on to enumerate the collection again and replace the output.
+    /// </summary>
+    [Fact]
+    public void A_checkpoint_refused_for_a_dropped_count_goes_with_the_completed_export()
+    {
+        const string filter = "startsWith(displayName,'a')";
+        var dir = NewDir();
+        var output = Path.Combine(dir, "out.jsonl");
+        var checkpoint = Path.Combine(dir, "run.checkpoint");
+        try
+        {
+            var run = 1;
+            var handler = new MockHttpHandler();
+            ProgramGrowingEndpoint(handler, "$count=true", CountUnsupported, () => run);
+            using var transport = MgxTransportScope.Inject(handler);
+
+            var firstResult = Export(output, checkpoint, filter);
+            Assert.DoesNotContain(FaultName, handler.UnansweredRules);
+            Assert.Null(firstResult);
+            var cp = PaginationCheckpoint.Load(checkpoint);
+            Assert.NotNull(cp);
+            Assert.Contains("$count=true", cp!.Resource);
+            Assert.NotNull(cp.TempFile);
+
+            run = 2;
+            var (secondCount, secondWarnings) = ExportReporting(output, checkpoint, filter);
+
+            Assert.Contains(secondWarnings, w => w.Contains("Resuming from checkpoint"));
+            Assert.Equal(GrownCollection, File.ReadAllLines(output));
+            Assert.Equal(4, secondCount);
+
+            var checkpointSurvivedRunTwo = File.Exists(checkpoint);
+
+            run = 3;
+            var (thirdCount, thirdWarnings) = ExportReporting(output, checkpoint, filter);
+
+            Assert.Equal(GrownCollection, File.ReadAllLines(output));
+            Assert.Equal(4, thirdCount);
+            Assert.DoesNotContain(thirdWarnings,
+                w => w.Contains("resum", StringComparison.OrdinalIgnoreCase));
+            Assert.False(checkpointSurvivedRunTwo,
+                "a completed export left a position into the enumeration it had just replaced");
         }
         finally
         {

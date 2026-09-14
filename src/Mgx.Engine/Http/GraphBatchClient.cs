@@ -154,8 +154,14 @@ public sealed class GraphBatchClient
 
     /// <summary>
     /// Status recorded for the items of a chunk whose own POST failed without a status of its
-    /// own - a stalled body, an open circuit. The request went out, so those writes may have
-    /// been applied; NotSentStatus would claim the opposite.
+    /// own. Two refusals land on it and it cannot separate them: a POST that went out and whose
+    /// answer never completed - a stalled response body, a transport failure mid-flight - and a
+    /// POST that never left, refused by an open circuit or by a rate limiter with no permit for
+    /// it. It is read as the first, because that is the reading a caller can act on safely: the
+    /// writes may have been applied, so resending them is a decision about duplicates.
+    /// NotSentStatus is kept for the refusals nothing went out for and the code knows it - a
+    /// chunk the run's stop reached before its first attempt, and the chunks never POSTed at
+    /// all - where claiming the opposite would be the more expensive error.
     /// </summary>
     private const int RefusedWithoutStatus = 503;
 
@@ -210,9 +216,9 @@ public sealed class GraphBatchClient
 
     /// <summary>
     /// Writes a refused chunk's own slots: an item the server answered keeps that answer, the
-    /// rest carry the refusal. The POST went out for all of them, so none of them may be
-    /// reported as never sent - the caller has to be able to tell a write that may have landed
-    /// from one that certainly did not.
+    /// rest take the refusal status, covering both a POST that went out unanswered and one an
+    /// open circuit or a rate limiter stopped before it left - read as the first, so none of
+    /// them may be reported as never sent.
     /// </summary>
     private static void FillRefusedChunk(
         (BatchOperation Operation, GraphBatchResponseItem Response)?[] results,

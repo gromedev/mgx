@@ -1,6 +1,6 @@
 @{
     RootModule        = 'mgx.psm1'
-    ModuleVersion     = '2.1.4'
+    ModuleVersion     = '2.1.5'
     GUID              = 'a3f7e8d2-5b4c-4a1e-9f6d-2c8b0e3a7d5f'
     Author            = 'Thomas Maillo Grome'
     CompanyName       = 'Mgx'
@@ -52,19 +52,17 @@
             LicenseUri   = 'https://github.com/gromedev/mgx/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/gromedev/mgx'
             ReleaseNotes = @'
-v2.1.4
+v2.1.5
 Fixed
-- Interrupted exports resume safely: unreadable, foreign, legacy, and case-differing checkpoints are handled without data loss or duplication.
-- Batch items the server answered keep their results through chunk failures; the dead-letter file never contains an applied write.
-- Batch summaries count only sent operations, and any chunk refusal reads as a failure.
-- A stalled response or error body fails at the body-read timeout in the error contract's terms.
-- A UTF-8 byte-order mark no longer discards fan-out, bulk-write, or expanded-relation results.
-- Headers, telemetry ratios, and flags enum combinations render culture-invariantly with their attribute-supplied names.
-- Removing the module restores the SDK's own client; re-enabling resilience never stacks wrappers.
-- A resuming run never takes a file a live run is writing, and never resumes a checkpoint it gave up on.
-- A caller's stop keeps the next retry off the wire; completed runs leave no abandoned partial files.
+- Two runs resuming or recovering one interrupted export or sync no longer write into the same file: the second stops and names the file the first holds.
+- Recovering an interrupted run never follows a link, waits on a pipe, or starts over on a copy that failed; every stop says what going on would have done and leaves both files as found.
+- A checkpoint from before 2.1 keeps the temp file it stands for when another run refuses it, and Sync-MgxDelta recovers that shape as Export-MgxCollection does.
+- Invoke-MgxBatchRequest refuses an item it cannot read instead of ending the run, cuts every pre-authenticated URL from the dead-letter file, checks the file before sending, and keeps item errors and telemetry under a Stop preference.
+- Set-MgxOption previews and prompts only for a change it makes; Invoke-MgxRequest asks its checkpoint question once per run; -WhatIf previews on every cmdlet report what the run would do.
+- Removing the module returns every option, the endpoint and the telemetry counters to their defaults.
 Added
-- Ecosystem isolation matrix over Az.Accounts, PnP.PowerShell, and ExchangeOnlineManagement, with its own CI job.
+- A committed benchmark baseline with a comparison run, a programmable fault plan for the mock Graph server, and pathological and interference gauntlets.
+- Fault injection at every point of an operation, pagination checks at page-size boundaries, and a help-freshness test over the compiled help.
 See CHANGELOG.md for the full list.
 '@
         }

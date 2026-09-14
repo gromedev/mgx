@@ -98,6 +98,30 @@ public class TypeCacheInvalidationTests
         }
     }
 
+    /// <summary>
+    /// The dependency resolver is the other subscription an import makes, and += is no more
+    /// idempotent there. A second one survives the -= a removal does and goes on answering
+    /// dependency loads out of a Dependencies folder belonging to a module the session removed.
+    /// </summary>
+    [Fact]
+    public void A_second_import_leaves_one_dependency_resolver_for_a_removal_to_detach()
+    {
+        try
+        {
+            new AlcInitializer().OnImport();
+            new AlcInitializer().OnImport();
+            Assert.Equal(1, ResolverSubscriptions());
+
+            // The removal itself, module argument and all - OnRemove never reads it.
+            new AlcInitializer().OnRemove(null!);
+            Assert.Equal(0, ResolverSubscriptions());
+        }
+        finally
+        {
+            new AlcInitializer().OnImport();
+        }
+    }
+
     /// <summary>Whether anything this test resolved, or wrote itself, is still cached.</summary>
     private static bool AnyStillCached() => Resolved.Any(MgxCmdletBase.s_typeCache.ContainsKey);
 
@@ -112,6 +136,21 @@ public class TypeCacheInvalidationTests
         Assert.True(field != null, "AssemblyLoadContext no longer keeps its subscribers in a static field");
         var subscribers = (Delegate?)field!.GetValue(null);
         return subscribers?.GetInvocationList().Count(d => d.Method.DeclaringType == typeof(MgxCmdletBase)) ?? 0;
+    }
+
+    /// <summary>
+    /// How many times mgx's dependency resolver is subscribed to the default load context.
+    /// AssemblyLoadContext keeps its Resolving subscribers in a private instance field, and that
+    /// invocation list is the only place the count shows: a second subscription is silent until a
+    /// removal detaches one and the other stays.
+    /// </summary>
+    private static int ResolverSubscriptions()
+    {
+        var field = typeof(AssemblyLoadContext).GetField(
+            "_resolving", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.True(field != null, "AssemblyLoadContext no longer keeps its Resolving subscribers in _resolving");
+        var subscribers = (Delegate?)field!.GetValue(AssemblyLoadContext.Default);
+        return subscribers?.GetInvocationList().Count(d => d.Method.DeclaringType == typeof(AlcInitializer)) ?? 0;
     }
 
     /// <summary>

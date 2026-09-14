@@ -1,0 +1,227 @@
+{
+  "SchemaVersion": 1,
+  "GeneratedAt": "2026-09-10T17:11:39.2385100+02:00",
+  "Scenarios": {
+    "01": {
+      "Scenario": "01",
+      "Script": "01-list-users.ps1",
+      "Headline": "MgxListMs",
+      "Discriminator": null,
+      "Metrics": {
+        "MgxListMs": {
+          "Value": 56924.0,
+          "Unit": "ms",
+          "Path": "mgx.Median.ElapsedMs"
+        },
+        "MgxTimeToFirstMs": {
+          "Value": 663.0,
+          "Unit": "ms",
+          "Path": "ttfrMgx.Median.ElapsedMs"
+        },
+        "MgxPeakWorkingSetMB": {
+          "Value": 314.6,
+          "Unit": "MB",
+          "Path": "mgx.Median.PeakWorkingSetMB"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T13:56:49.347805+02:00",
+      "PromotedAt": "2026-09-10T15:50:28.117482+02:00"
+    },
+    "02": {
+      "Scenario": "02",
+      "Script": "02-fanout-lookup.ps1",
+      "Headline": "MgxFanoutMs",
+      "Discriminator": null,
+      "Metrics": {
+        "MgxFanoutMs": {
+          "Value": 127303.0,
+          "Unit": "ms",
+          "Path": "mgx.Median.ElapsedMs"
+        },
+        "MgxPeakWorkingSetMB": {
+          "Value": 330.1,
+          "Unit": "MB",
+          "Path": "mgx.Median.PeakWorkingSetMB"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T14:40:49.214531+02:00",
+      "PromotedAt": "2026-09-10T15:50:28.122807+02:00"
+    },
+    "04": {
+      "Scenario": "04",
+      "Script": "04-batch-create.ps1",
+      "Headline": "MgxBatchCreateMs",
+      "Discriminator": null,
+      "Metrics": {
+        "MgxBatchCreateMs": {
+          "Value": 503002.0,
+          "Unit": "ms",
+          "Path": "mgxCreate.ElapsedMs"
+        },
+        "MgxBatchPatchMs": {
+          "Value": 49333.0,
+          "Unit": "ms",
+          "Path": "batchPatch.ElapsedMs"
+        },
+        "MgxFanoutPatchMs": {
+          "Value": 28851.0,
+          "Unit": "ms",
+          "Path": "fanoutPatch.ElapsedMs"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T17:06:39.0267+02:00",
+      "PromotedAt": "2026-09-10T17:11:39.2330620+02:00"
+    },
+    "05": {
+      "Scenario": "05",
+      "Script": "05-memory-export.ps1",
+      "Headline": "MgxExportPeakWorkingSetMB",
+      "Discriminator": null,
+      "Metrics": {
+        "MgxExportPeakWorkingSetMB": {
+          "Value": 311.6,
+          "Unit": "MB",
+          "Path": "mgxExport.PeakWorkingSetMB"
+        },
+        "MgxExportMs": {
+          "Value": 47303.0,
+          "Unit": "ms",
+          "Path": "mgxExport.ElapsedMs"
+        },
+        "MgxExportManagedHeapDeltaMB": {
+          "Value": 24.8,
+          "Unit": "MB",
+          "Path": "mgxExport.ManagedHeapDeltaMB"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T13:59:39.157651+02:00",
+      "PromotedAt": "2026-09-10T15:50:28.121054+02:00"
+    },
+    "08": {
+      "Scenario": "08",
+      "Script": "08-delta-sync.ps1",
+      "Headline": "InitialSyncMs",
+      "Discriminator": null,
+      "Metrics": {
+        "InitialSyncMs": {
+          "Value": 255781.0,
+          "Unit": "ms",
+          "Path": "initial.ElapsedMs"
+        },
+        "IncrementalSyncMs": {
+          "Value": 452.0,
+          "Unit": "ms",
+          "Path": "incremental.ElapsedMs"
+        },
+        "SteadySyncMs": {
+          "Value": 147.0,
+          "Unit": "ms",
+          "Path": "steady.ElapsedMs"
+        },
+        "InitialItems": {
+          "Value": 140261.0,
+          "Unit": "",
+          "Path": "initial.Output.items"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T14:54:54.564289+02:00",
+      "PromotedAt": "2026-09-10T15:50:28.124234+02:00"
+    },
+    "09": {
+      "Scenario": "09",
+      "Script": "09-kill-resume.ps1",
+      "Headline": "CheckpointedExportMs",
+      "Discriminator": null,
+      "Metrics": {
+        "CheckpointedExportMs": {
+          "Value": 48406.0,
+          "Unit": "ms",
+          "Path": "checkpointed.ElapsedMs"
+        },
+        "BaselineExportMs": {
+          "Value": 45995.0,
+          "Unit": "ms",
+          "Path": "baseline.ElapsedMs"
+        },
+        "ResumeMs": {
+          "Value": 26640.0,
+          "Unit": "ms",
+          "Path": "resume.ElapsedMs"
+        },
+        "CheckpointOverheadPct": {
+          "Value": 5.2,
+          "Unit": "%",
+          "Path": "verification.overheadPct"
+        },
+        "DuplicateIds": {
+          "Value": 0.0,
+          "Unit": "",
+          "Path": "verification.duplicateIds"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T14:57:23.266194+02:00",
+      "PromotedAt": "2026-09-10T15:50:28.126139+02:00"
+    },
+    "18": {
+      "Scenario": "18",
+      "Script": "18-spo-latency-clamp.ps1",
+      "Headline": "P90ElapsedMs",
+      "Discriminator": "live suite content tests about 25 minutes earlier; nothing else of ours on this tenant since",
+      "Metrics": {
+        "P90ElapsedMs": {
+          "Value": 225.0,
+          "Unit": "ms",
+          "Path": "Overall.P90ElapsedMs"
+        },
+        "P50ElapsedMs": {
+          "Value": 171.0,
+          "Unit": "ms",
+          "Path": "Overall.P50ElapsedMs"
+        },
+        "P99ElapsedMs": {
+          "Value": 517.0,
+          "Unit": "ms",
+          "Path": "Overall.P99ElapsedMs"
+        },
+        "P90CallElapsedMs": {
+          "Value": 295.0,
+          "Unit": "ms",
+          "Path": "Overall.P90CallElapsedMs"
+        },
+        "ClampRatio": {
+          "Value": 1.0,
+          "Unit": "x",
+          "Path": "Overall.ClampRatio"
+        },
+        "Throttled429": {
+          "Value": 203.0,
+          "Unit": "",
+          "Path": "Overall.Throttled429"
+        }
+      },
+      "MgxVersion": "2.1.4",
+      "SdkVersion": "2.34.0",
+      "PSVersion": "7.6.4",
+      "RecordedAt": "2026-09-10T14:31:37.737793+02:00",
+      "PromotedAt": "2026-09-10T15:11:15.980556+02:00"
+    }
+  }
+}

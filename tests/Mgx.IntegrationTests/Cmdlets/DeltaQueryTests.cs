@@ -1020,9 +1020,13 @@ public class DeltaQueryTests
 
             // Output file should NOT exist (error before atomic rename)
             Assert.False(File.Exists(outputPath), "Output file should not exist after error");
-            // No .tmp files should remain
+            // No .tmp of this run's should remain. Named for the output this test generated,
+            // not for the prefix every process running the suite shares: the temps a sync
+            // leaves are "{output}.{guid}.tmp", so that name picks out this invocation's and
+            // nothing else's, and a sibling run's in-flight temp in the shared directory is
+            // another test's business.
             var dir = Path.GetDirectoryName(outputPath)!;
-            var tmpFiles = Directory.GetFiles(dir, "*.tmp").Where(f => f.Contains("cmdlet-tempclean")).ToArray();
+            var tmpFiles = Directory.GetFiles(dir, Path.GetFileName(outputPath) + ".*.tmp");
             Assert.Empty(tmpFiles);
             // Should have errors
             Assert.True(ps.HadErrors, "Should have errors from 500 response");

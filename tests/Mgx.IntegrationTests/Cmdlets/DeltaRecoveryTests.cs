@@ -325,11 +325,12 @@ public class DeltaRecoveryTests
     }
 
     /// <summary>
-    /// A resume opens the output itself for append, and a denying ACL or read-only bit there
-    /// raises UnauthorizedAccessException - which does not derive from IOException, so a
-    /// handler catching only the latter turns an ordinary permission failure into an unhandled
-    /// error. It must surface the same way an unwritable path does everywhere else: as an
-    /// AccessDenied error record.
+    /// A resume appends into the output itself, so a denying ACL or read-only bit there is this
+    /// run's problem before any request is made: the claim on the file the checkpoint counts its
+    /// items into fails on permissions, and the run ends on an error record naming that file and
+    /// the two ways out of it. What it may never be is an unhandled failure -
+    /// UnauthorizedAccessException does not derive from IOException, and a handler catching only
+    /// the latter let an ordinary permission problem out of the cmdlet as one.
     /// </summary>
     [Fact]
     public void A_denied_output_ends_the_resume_as_an_error_record_not_an_unhandled_failure()
@@ -372,11 +373,23 @@ public class DeltaRecoveryTests
               .AddParameter("DeltaPath", deltaPath)
               .AddParameter("CheckpointPath", checkpointPath)
               .AddParameter("OutputFile", outputPath);
-            var escaped = Record.Exception(() => ps.Invoke());
+            // Only the wrapper a terminating error arrives in is caught here. Any other type
+            // escaping this call is the unhandled failure this is about, and fails the test.
+            List<ErrorRecord> errors = [];
+            try { ps.Invoke(); }
+            catch (CmdletInvocationException ex) { errors.Add(ex.ErrorRecord); }
+            errors.AddRange(ps.Streams.Error);
 
-            Assert.Null(escaped);
-            Assert.Contains(ps.Streams.Error,
-                e => e.FullyQualifiedErrorId.StartsWith("AccessDenied", StringComparison.Ordinal));
+            var stop = Assert.Single(errors);
+            Assert.StartsWith("CheckpointOutputUnopenable", stop.FullyQualifiedErrorId,
+                StringComparison.Ordinal);
+            Assert.Equal(ErrorCategory.PermissionDenied, stop.CategoryInfo.Category);
+            Assert.Contains($"'{outputPath}' could not be opened for writing:",
+                stop.Exception.Message);
+            Assert.Contains(
+                "Grant write access to that file and run again to resume from it, or remove it "
+                + "and the checkpoint to sync afresh.",
+                stop.Exception.Message);
         }
         finally
         {

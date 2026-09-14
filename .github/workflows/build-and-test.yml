@@ -58,7 +58,7 @@ jobs:
       - name: Assert xUnit actually ran
         shell: pwsh
         run: |
-          $floor = 2995
+          $floor = 3380
           $trx = Get-ChildItem TestResults -Filter *.trx | Select-Object -First 1
           if (-not $trx) { throw "No .trx produced - the test run did not report results." }
           $c = ([xml](Get-Content $trx.FullName -Raw)).TestRun.ResultSummary.Counters
@@ -82,13 +82,18 @@ jobs:
           Import-Module ./tests/TestHarness.psm1
           $result = Invoke-TestHarness -IgnoreCodeCoverage
           "Pester executed $($result.TotalCount): $($result.PassedCount) passed, $($result.FailedCount) failed, $($result.SkippedCount) skipped" | Write-Host
-          if ($result.FailedCount -gt 0) {
-              throw "$($result.FailedCount) Pester test(s) failed."
+          # FailedCount alone misses a container that never ran - a parse error or a top-level
+          # throw fails the container with FailedCount still 0, so Result and
+          # FailedContainersCount are checked too, and both gates on this leg (and the compat
+          # leg's twin below) trip on the same condition.
+          if ($result.FailedCount -gt 0 -or $result.FailedContainersCount -gt 0 -or $result.Result -ne 'Passed') {
+              $failed = $result.FailedContainers | ForEach-Object { $_.Name }
+              throw "$($result.FailedCount) Pester test(s) failed, $($result.FailedContainersCount) container(s) failed: $($failed -join ', ')"
           }
           # Silence is not success here either. This floor keeps a small margin rather than
           # sitting on the measured total, because the number it has to hold on is the one the
           # compat leg below reports and that host is not this one. Raise both together.
-          $floor = 240
+          $floor = 333
           $ran = [int]$result.PassedCount + [int]$result.SkippedCount
           if ($ran -lt $floor) {
               throw "Only $ran Pester test(s) ran, expected at least $floor. The suite is not running."
@@ -178,10 +183,15 @@ jobs:
           Import-Module ./tests/TestHarness.psm1 -Force
           $r = Invoke-TestHarness -IgnoreCodeCoverage
           "$($r.PassedCount) passed, $($r.FailedCount) failed, $($r.SkippedCount) skipped" | Write-Host
-          if ($r.FailedCount -gt 0) { throw "$($r.FailedCount) test(s) failed" }
+          # Same condition as the main leg's Pester gate: FailedCount alone misses a container
+          # that never ran at all.
+          if ($r.FailedCount -gt 0 -or $r.FailedContainersCount -gt 0 -or $r.Result -ne 'Passed') {
+              $failed = $r.FailedContainers | ForEach-Object { $_.Name }
+              throw "$($r.FailedCount) test(s) failed, $($r.FailedContainersCount) container(s) failed: $($failed -join ', ')"
+          }
           # The same margin the main leg carries, for the same reason: this is the host the
           # Pester total has to be true on, and nothing measures it outside this job.
-          $floor = 240
+          $floor = 333
           $ran = [int]$r.PassedCount + [int]$r.SkippedCount
           if ($ran -lt $floor) {
               throw "Only $ran test(s) ran on this host, expected at least $floor."

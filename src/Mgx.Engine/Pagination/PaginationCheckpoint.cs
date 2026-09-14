@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -110,7 +111,17 @@ public sealed class PaginationCheckpoint
             var tmpPath = normalizedPath + ".tmp";
             try
             {
-                File.WriteAllText(tmpPath, json);
+                // Cleared and then created, rather than written into whatever stands at the
+                // name: an open that creates or truncates follows a symlink there and fills or
+                // truncates the link's target with this checkpoint, and a FIFO with no reader
+                // blocks the write forever - past a cancellation, since nothing on the pipeline
+                // thread can reach a blocked open.
+                using (var scratch = ScratchName.Create(tmpPath, "the checkpoint's staging file"))
+                using (var writer = new StreamWriter(scratch, new UTF8Encoding(false, true),
+                           1024, leaveOpen: true))
+                {
+                    writer.Write(json);
+                }
                 File.Move(tmpPath, normalizedPath, overwrite: true);
             }
             catch

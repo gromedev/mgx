@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -104,7 +105,17 @@ public sealed class DeltaState
             var tmpPath = normalizedPath + ".tmp";
             try
             {
-                File.WriteAllText(tmpPath, json);
+                // Cleared and then created, rather than written into whatever stands at the
+                // name: an open that creates or truncates follows a symlink there and fills or
+                // truncates the link's target with this state, and a FIFO with no reader blocks
+                // the write forever - past a cancellation, since nothing on the pipeline thread
+                // can reach a blocked open.
+                using (var scratch = ScratchName.Create(tmpPath, "the delta state's staging file"))
+                using (var writer = new StreamWriter(scratch, new UTF8Encoding(false, true),
+                           1024, leaveOpen: true))
+                {
+                    writer.Write(json);
+                }
                 File.Move(tmpPath, normalizedPath, overwrite: true);
             }
             catch
@@ -145,10 +156,16 @@ public sealed class DeltaState
     }
 
     /// <summary>
-    /// Validates write access to the delta file path. Call in BeginProcessing
-    /// to fail fast before any HTTP calls.
+    /// Validates write access to a path the run will write to. Call in BeginProcessing to fail
+    /// fast before any HTTP calls.
     /// </summary>
-    public static void ValidateWriteAccess(string path)
+    /// <param name="path">The file whose directory has to be writable.</param>
+    /// <param name="what">
+    /// What that file is, for the failure to name. The sync probes two of them, and one noun for
+    /// both reported an -OutputFile directory it could not write to as the delta state path -
+    /// sending the caller to a file that had just passed the same probe.
+    /// </param>
+    public static void ValidateWriteAccess(string path, string what = "delta state path")
     {
         // NOTE: a directory passes the probe below, because the probe writes "<path>.probe"
         // NEXT to the target rather than to it, so the fail-fast check succeeds and the real
@@ -161,16 +178,62 @@ public sealed class DeltaState
         if (dir != null && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
+        // The probe name is cleared before it is created, and created by an open that refuses
+        // to use anything already standing there. Written with Create/Write, the probe followed
+        // a symlink at that name and truncated the link's target to nothing - a file outside
+        // this directory, taken away by a check whose whole purpose is to touch nothing - and a
+        // FIFO left there blocked the open in BeginProcessing, before the run had anything a
+        // cancellation could unwind.
         var probe = path + ".probe";
+        var swept = ScratchName.Sweep(probe, out var stood);
+
+        // A file another run holds at that name is that run's own probe, taken out a moment ago
+        // in this very directory - which is the question this one is asking. Two runs over one
+        // -DeltaPath, or one -OutputFile, reach here together as a matter of course, and
+        // refusing either of them for the other's sake would end a run over nothing that is
+        // wrong with the path. The two refusals left say something about the path itself: a
+        // directory at the name, or an entry the directory will not let go of.
+        if (swept == ScratchEntry.Held) return;
+        if (swept.Refused())
+        {
+            throw new InvalidOperationException(
+                $"Cannot write to {what} '{path}': {swept.WhatStood(probe, stood)}.", stood);
+        }
+
+        FileStream created;
         try
         {
-            File.WriteAllText(probe, "");
-            File.Delete(probe);
+            created = ScratchName.CreateNew(probe);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // Another run reached the name first, which on this name is its probe: a create
+            // refuses a name that already exists, and a create that meets the claim the other
+            // run is holding that name by is refused as a sharing violation. Either way it is
+            // the answer the sweep above gives a held probe, for the reason it gives it.
+            //
+            // Read off the refusal as well as off the name, because the entry that refuses this
+            // create is one the run that made it is about to take away: asked of the name alone,
+            // the question arrives after the answer has gone. Two syncs released together over
+            // one -DeltaPath had the second create refused by the first one's probe, found the
+            // name clear an instruction later, and ended in BeginProcessing naming a path
+            // nothing was wrong with.
+            //
+            // A directory is not that. It is the path's own refusal, it is not this run's to
+            // remove, and it is still standing to be asked about - which is asked of the
+            // filesystem, since a create meets one as an access failure on Windows and as a
+            // name that already exists on Unix. Neither is a create the directory refused
+            // outright, which is the failure this whole probe exists to reach.
+            var reachedFirst = File.Exists(probe)
+                || (ex is IOException refused
+                    && (ScratchName.IsAlreadyExists(refused)
+                        || ScratchName.IsSharingViolation(refused)));
+            if (reachedFirst && !Directory.Exists(probe)) return;
             throw new InvalidOperationException(
-                $"Cannot write to delta state path '{path}': {ex.Message}", ex);
+                $"Cannot write to {what} '{path}': {ex.Message}", ex);
         }
+
+        // Unlinked under the handle that holds it, so the name is never decided and unheld.
+        ScratchName.Discard(probe, created);
     }
 }

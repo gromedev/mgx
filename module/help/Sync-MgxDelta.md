@@ -28,7 +28,7 @@ Drive delta is fully supported: `/me/drive/root/delta`, `/drives/{id}/root/delta
 
 Items that no longer match the query appear with an `@removed` property containing `{"reason": "changed"}` (item moved out of scope or soft-deleted) or `{"reason": "deleted"}` (permanently deleted). Filter these with `Where-Object { -not $_.'@removed' }`. The completion message counts them separately.
 
-Delta tokens expire after approximately 7 days for directory objects (users, groups, applications). When a token expires, Graph returns HTTP 410 Gone. Sync-MgxDelta handles this automatically by deleting the stale token (and any resume checkpoint) and performing a full re-sync with a warning.
+Delta tokens expire after approximately 7 days for directory objects (users, groups, applications). When a token expires, Graph returns HTTP 410 Gone. Sync-MgxDelta handles this automatically by deleting the stale token (and this run's own resume checkpoint) and performing a full re-sync with a warning.
 
 Resume semantics are at-least-once: in pipeline mode the page in flight at a crash is re-emitted in full on resume; in JSONL mode mid-page checkpoints keep the window to at most 500 items. Deduplicate on `id` downstream if exact-once matters.
 
@@ -123,7 +123,9 @@ Accept wildcard characters: False
 ```
 
 ### -CheckpointPath
-Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. Must differ from -DeltaPath and -OutputFile.
+Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. A completion and a 410 delete this run's own checkpoint; one they recognize as another sync's is left as it stands, for the sync that resumes from exactly it. Must differ from -DeltaPath and -OutputFile.
+
+A run stops - with nothing written to the output, the checkpoint, a temp or the delta state - when the temp file the checkpoint names, or the output it would append to or replace, is open in another sync or cannot be opened for writing (a permission, a directory or a pipe at the path, a link that cannot be followed, a path too long for the file system, a socket, a directory above it this account cannot search), or when the copy it stages before promoting a temp fails, in which case both files are left as found: the changes it counts are in that file and this checkpoint is the only thing that counts them, and syncing anyway would write over both and advance the token past those changes. This holds whether the run would append, promote a temp, or re-enumerate from the last saved delta token after its temp vanished. The copy a promotion stages is written beside the output under a name the run creates itself, and the name is cleared first: a link, a pipe, a socket, a copy left by an interrupted promotion or a copy this account cannot open standing there is deleted and the removal reported as a warning, while a directory or a copy another run holds stops the run instead. Wait for that sync to finish, give this run its own -OutputFile and -CheckpointPath, or grant write access to that file - or to the directory holding it, where that is what the run names - and run again. A resumed or promoting run holds the output open for as long as it is appending, which is what stops a second run over the same command line; a run recovering a checkpoint older than 2.1 opens the output as it always has. On Linux and macOS a PowerShell reader of a held file fails with a sharing violation until the run ends, while tail and cat read it as before.
 
 ```yaml
 Type: String

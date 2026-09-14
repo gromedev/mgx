@@ -168,8 +168,29 @@ public class ExportMgxCollection : MgxCmdletBase
         // the remainder of the enumeration was appended onto a previous export's file. Every
         // form goes to the same comparison, and it settles which URL this run resumes before
         // anything is promoted, trimmed or deleted.
+        //
+        // And decided without writing anything, like everything else above the gate: which
+        // spellings of a file name the output's directory keeps apart is a question this run
+        // would otherwise answer by creating a file there, and -WhatIf reports what a run would
+        // do without moving the caller's directory's write time to do it. An entry already in
+        // the directory answers it for free; only a directory holding nothing cannot, and there
+        // the platform's own rule stands for this side of the gate while the run below asks the
+        // volume itself. Said out loud, because that is the one case where the two can differ.
         if (cpPath != null && File.Exists(cpPath)
-            && AttemptFormOf(PaginationCheckpoint.Load(cpPath), outputPath, countAutoAdded) is { } form)
+            && DirectoryCaseRuleNeedsProbe(Path.GetDirectoryName(outputPath)))
+        {
+            WriteVerbose(
+                $"Nothing in '{Path.GetDirectoryName(outputPath)}' says whether it keeps two "
+                + "spellings of a name apart, and nothing above the ShouldProcess gate writes a "
+                + "file to ask it, so the checkpoint's file names are compared here under the "
+                + $"{(PlatformCaseRule ? "case-sensitive" : "case-insensitive")} rule this "
+                + "platform applies by default. A run that goes past the gate asks the directory "
+                + "itself, so the two differ only on a volume whose rule is not that default.");
+        }
+
+        if (cpPath != null && File.Exists(cpPath)
+            && AttemptFormOf(PaginationCheckpoint.Load(cpPath), outputPath, countAutoAdded,
+                   mayWrite: false) is { } form)
         {
             includeAutoCount = form.IncludeCount;
             suppressTop = form.SuppressTop;
@@ -183,7 +204,14 @@ public class ExportMgxCollection : MgxCmdletBase
         // question that should need a Graph connection.
         var wouldAppend = ReconcileCheckpoint(cpPath, outputPath, includeAutoCount, suppressTop, apply: false);
         if (!ShouldProcess(outputPath, wouldAppend ? "Append JSONL data" : "Export JSONL data"))
+        {
+            // A preview that ends here is the only one that has to say this. The pass below
+            // reaches the same condition and ends the run on it, so a caller who is not
+            // previewing reads it as the error it is.
+            if (_wouldRemoveAtStagingName is { } wouldRemove) WriteWarning(wouldRemove);
+            if (_wouldStopOnCheckpointFile is { } wouldStop) WriteWarning(wouldStop);
             return;
+        }
 
         // Whether this run appends to the output rather than exporting into a fresh temp,
         // decided once, against every form of the URL the attempts below can build, and only
@@ -193,8 +221,23 @@ public class ExportMgxCollection : MgxCmdletBase
         // refusal has to outlast the attempt that made it.
         var appendToOutput = ReconcileCheckpoint(cpPath, outputPath, includeAutoCount, suppressTop, apply: true);
 
+        // What the reconcile just took, on a resumed run, is the output itself, and it is this
+        // run's until the writing ends. Released here on every way out of the loop below,
+        // including the one that never reaches it - GetClient on a session that is not connected
+        // - and again from Dispose, which is what a pipeline stopped from outside reaches.
+        using var writingEnds = ReleasingOutputWhenWritingEnds();
+
         // Init client after the gate (populates s_graphEndpoint for sovereign clouds)
         var client = GetClient();
+
+        // Whether an attempt of this run has written a checkpoint of its own over
+        // -CheckpointPath. A refusal leaves the file where it is and the very next page boundary
+        // saves over the same path, so what the refusal was protecting is gone and what is there
+        // is this run's - which is what the completion path has to know before it spares the
+        // file on the refusal's account. Run-scoped, unlike the per-attempt flag of the same
+        // reading inside the loop: that one answers which attempt saved the checkpoint now on
+        // disk, and the temp it decides to keep needs exactly that.
+        var tookOverCheckpoint = false;
 
         for (int attempt = 0; attempt < 3; attempt++)
         {
@@ -219,7 +262,8 @@ public class ExportMgxCollection : MgxCmdletBase
                     var checkpoint = PaginationCheckpoint.Load(cpPath);
                     if (checkpoint != null)
                     {
-                        if (!DescribesThisExport(checkpoint, outputPath, includeAutoCount, suppressTop))
+                        if (!DescribesThisExport(checkpoint, outputPath, includeAutoCount,
+                                suppressTop, mayWrite: true))
                         {
                             // Ownership is re-decided on every load, not carried over from the
                             // check above: the checkpoint is a file, the run that owns it is
@@ -237,13 +281,48 @@ public class ExportMgxCollection : MgxCmdletBase
                             // second time. Withdrawn in silence, the recovery message was the
                             // last thing on any stream, and a run that had quietly started over
                             // was indistinguishable from one that resumed.
-                            _refusedCheckpointTemp = checkpoint.TempFile;
+                            //
+                            // Two readings reach here and only one of them is about whose the
+                            // file is, which is where they part company: the run does the same
+                            // thing either way - drops the resume and exports fresh - and what
+                            // it leaves on disk afterwards is the opposite thing. Every form of
+                            // the request this run can build goes to the same comparison the
+                            // adoption above the loop makes, so a checkpoint that matches one
+                            // of them is this export's own, saved under the form an endpoint
+                            // that refused $top or the auto-added $count has since sent the
+                            // loop round without. The verdict is about the ones that match none.
+                            var ownership =
+                                AttemptFormOf(checkpoint, outputPath, countAutoAdded,
+                                    mayWrite: true) != null
+                                    ? CheckpointOwnership.Mine
+                                    : OwnershipOf(checkpoint, outputPath, includeAutoCount,
+                                        suppressTop, mayWrite: true);
                             appendToOutput = false;
-                            WriteWarning(
-                                $"The resume checkpoint at '{cpPath}' no longer describes this export - the "
-                                + "request was rebuilt without a query option the endpoint refused, or another "
-                                + $"run replaced the file - so the resume is dropped and '{outputPath}' is "
-                                + "exported from the beginning; nothing is lost.");
+                            if (ownership == CheckpointOwnership.Mine)
+                            {
+                                // This export's own position, into the enumeration this run is
+                                // about to make again and replace the output with. Nothing is
+                                // held back on its account: the completion path deletes it as
+                                // it deletes any checkpoint of this run's, and a temp it still
+                                // names is this run's own for the sweep below to reclaim. Left
+                                // standing instead, it is a position nothing comes back to, and
+                                // the next run over the same command line reads it as its own -
+                                // the finished output cut back to the byte count of an
+                                // enumeration that has since been replaced, and the remainder
+                                // appended from a nextLink counting items it no longer holds.
+                                WriteWarning(RebuiltRequestWarning(cpPath, outputPath));
+                            }
+                            else
+                            {
+                                // Another export's, or one nothing beside this output
+                                // corroborates. The export it belongs to resumes from exactly
+                                // that, so for the rest of the run the sweep below leaves this
+                                // checkpoint's temp where it is, and the completion path leaves
+                                // the checkpoint itself.
+                                _sparedCheckpoint = SparedCheckpoint.NotThisRuns;
+                                _refusedCheckpointTemp = checkpoint.TempFile;
+                                WriteWarning(ReplacedCheckpointWarning(cpPath, outputPath));
+                            }
                         }
                         else if (checkpoint.NextLink == null)
                         {
@@ -305,7 +384,8 @@ public class ExportMgxCollection : MgxCmdletBase
                     // back to a position pointing at nothing and re-enumerated from the first
                     // page - the cost the refusal was written to avoid. The sweep is all or
                     // nothing over this output's temps, so a run that has just refused leaves
-                    // them to the next run that has not.
+                    // them to the next run that has not. A run that could not claim the temp
+                    // its checkpoint names never gets here to decide: it stops above the client.
                     //
                     // And once more on a retry, where the checkpoint standing over the temp is
                     // this run's own. An endpoint that refuses the auto-added $count, or $top,
@@ -321,6 +401,24 @@ public class ExportMgxCollection : MgxCmdletBase
                             $"Left the temp files beside '{outputPath}' alone: '{_refusedCheckpointTemp}' "
                             + "holds the items of the checkpoint this run refused.");
                     }
+                    else if (_sparedCheckpoint is SparedCheckpoint.NotThisRuns
+                             && _refusedCheckpointTemp == null)
+                    {
+                        // The refused checkpoint names no temp, which is not the same as there
+                        // being none: a checkpoint written before the name was recorded stands
+                        // for a temp beside this output all the same, and there is nothing here
+                        // that says which of them it is. Keyed on the temp name alone, the
+                        // refusal spared the checkpoint and the sweep took the one file it was
+                        // pointing at - so the export it belongs to came back to a position over
+                        // nothing and re-enumerated from the first page, the exact cost the
+                        // refusal is written to avoid, under a warning that had just promised
+                        // the files would be left as they are. So the whole sweep goes with the
+                        // refusal, and the orphans it would have taken are left to the next run
+                        // over this output that has not refused anything.
+                        WriteVerbose(
+                            $"Left the temp files beside '{outputPath}' alone: one of them may "
+                            + "hold the items of the checkpoint this run refused.");
+                    }
                     else if (_keptTempPath != null && File.Exists(_keptTempPath))
                     {
                         WriteVerbose(
@@ -333,6 +431,14 @@ public class ExportMgxCollection : MgxCmdletBase
                         DeleteStaleTemps(outputPath);
                     }
                 }
+                // The output is let go the moment this attempt stops appending to it. Every way
+                // appendToOutput is withdrawn - the checkpoint or the output gone between
+                // attempts, an ownership verdict landing on a reload, a 410 sending the loop
+                // round for a full pass - ends with this run replacing the output from a temp
+                // instead, and a handle of its own on the destination is what that move fails
+                // against. An attempt that still appends keeps the hold it was given.
+                if (!appendToOutput) ReleaseOutputHold();
+
                 var writePath = appendToOutput ? outputPath : $"{outputPath}.{Guid.NewGuid():N}.tmp";
                 // What the checkpoint sites below should say about WHERE the counted items are.
                 // A resumed run appends to the output itself, so it has no temp to name.
@@ -376,7 +482,14 @@ public class ExportMgxCollection : MgxCmdletBase
 
                 try
                 {
-                    using (var writer = new StreamWriter(writePath, appendToOutput))
+                    // The reconcile's own handle on the output, where this run resumed into it.
+                    // Never a second open of that file while the hold stands: on Unix the hold's
+                    // LOCK_EX refuses one from this process as readily as from another, and on
+                    // Windows its write access does. The pre-length adoption route appends
+                    // without a hold and opens its own, as it always has.
+                    using (var writer = appendToOutput && HeldOutput is { } held
+                               ? held.AppendingWriter()
+                               : new StreamWriter(writePath, appendToOutput))
                     {
                         var iterator = new PageIterator(client);
 
@@ -406,11 +519,22 @@ public class ExportMgxCollection : MgxCmdletBase
                                             DataLength = checkpointDataLength
                                         }.Save(cpPath);
                                         savedOwnCheckpoint = true;
+                                        tookOverCheckpoint = true;
                                         ReleaseKeptTemp();
                                     }
                                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                                     {
-                                        WriteWarning($"Checkpoint save failed (page boundary): {ex.Message}");
+                                        // Buffered rather than written here. This callback runs
+                                        // on whichever thread the iterator resumed on, and a
+                                        // page that yields nothing resumes on the thread pool -
+                                        // so a WriteWarning from here throws
+                                        // PSInvalidOperationException, and the disk problem it
+                                        // was reporting ends the export instead of being
+                                        // reported. The drains write it from the pipeline
+                                        // thread, on the same channel the client's own warnings
+                                        // take.
+                                        client.EnqueueWarning(
+                                            $"Checkpoint save failed (page boundary): {ex.Message}");
                                     }
                                 }
                                 if (info.NextPageUrl != null)
@@ -452,6 +576,7 @@ public class ExportMgxCollection : MgxCmdletBase
                                                 DataLength = checkpointDataLength
                                             }.Save(cpPath);
                                             savedOwnCheckpoint = true;
+                                            tookOverCheckpoint = true;
                                             ReleaseKeptTemp();
                                         }
                                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -487,7 +612,37 @@ public class ExportMgxCollection : MgxCmdletBase
                     // The items are in the output now, so the position describing them is
                     // spent. A crash in the gap costs a re-enumeration: the checkpoint names a
                     // temp that is no longer there, which recovery reads as unusable.
-                    if (cpPath != null) PaginationCheckpoint.Delete(cpPath);
+                    //
+                    // Spent for this export, and the file on disk is only this export's once no
+                    // refusal left it standing and a save of its own has landed on the path. A
+                    // run that refused what it found and then finished without ever saving one,
+                    // everything it had fitting in a single page, deleted the file it had warned
+                    // it would leave alone, orphaning the temp it had just spared the sweep and
+                    // sending the export that needs both back to page one.
+                    //
+                    // One of the three readings spares it: the ownership verdict's, where
+                    // whatever wrote the file resumes from exactly it. Not a checkpoint refused
+                    // for a request the endpoint made this run rebuild - that one records a
+                    // position into an enumeration this run has just replaced and nothing more,
+                    // and left standing beside the finished output it is what the next run over
+                    // the same command line reads as its own and promotes a superseded temp
+                    // over a completed file from. And not a checkpoint whose temp, or whose
+                    // output, this run could not claim, which reaches no door at all: that run
+                    // stopped at the reconcile, above the client, having written nothing.
+                    //
+                    // tookOverCheckpoint is the flag, and savedOwnCheckpoint has nothing left
+                    // to add: it answers for the attempt finishing here, and every site that
+                    // sets it sets the run-scoped one beside it - which also covers the attempt
+                    // a query the endpoint refused sent round again with a boundary checkpoint
+                    // of this run's already over the path.
+                    if (_sparedCheckpoint is SparedCheckpoint.NotThisRuns && !tookOverCheckpoint)
+                    {
+                        WriteVerbose(SparedCheckpointVerbose("export completed"));
+                    }
+                    else if (cpPath != null)
+                    {
+                        PaginationCheckpoint.Delete(cpPath);
+                    }
 
                     // And with it goes the last thing that could have named a temp an earlier
                     // attempt kept - the attempt that finished need never have saved a
@@ -706,6 +861,32 @@ public class ExportMgxCollection : MgxCmdletBase
         + "one -CheckpointPath overwrite each other's resume position; give each its own.";
 
     /// <summary>
+    /// What a caller can act on when the request was rebuilt under this export's own feet: the
+    /// endpoint refused a query option part-way through, the loop went round without it, and
+    /// the position on disk counts a URL this run has stopped building. It is this export's
+    /// own, and the resume it was announced for is being taken back, so the sentence has to say
+    /// both - the collection is enumerated from the first page again, and the file goes the way
+    /// any of this run's own positions go once the output is complete.
+    /// </summary>
+    private static string RebuiltRequestWarning(string checkpointPath, string outputPath) =>
+        $"The resume checkpoint at '{checkpointPath}' records this export under a form of the "
+        + "request the endpoint has since refused, so the resume is dropped and "
+        + $"'{outputPath}' is exported from the beginning; the checkpoint is this run's own and "
+        + "goes with the completed export.";
+
+    /// <summary>
+    /// And what they can act on when a resume already announced turns out to be another run's
+    /// position: the file at -CheckpointPath was replaced between the reconcile's read and this
+    /// one, so what is there now describes an output or an enumeration that is not this one.
+    /// Both files are left where they are, because whatever wrote them resumes from exactly
+    /// that.
+    /// </summary>
+    private static string ReplacedCheckpointWarning(string checkpointPath, string outputPath) =>
+        $"The resume checkpoint at '{checkpointPath}' no longer describes this export - another "
+        + $"run replaced the file - so the resume is dropped and '{outputPath}' is exported from "
+        + "the beginning; the checkpoint and the temp it names are left as they are.";
+
+    /// <summary>
     /// What a caller can act on when a checkpoint that records no output file is refused: it
     /// was written before the output was recorded, nothing beside this one's output stands for
     /// it any more, and this run exports from the beginning. Naming a different export there
@@ -719,16 +900,224 @@ public class ExportMgxCollection : MgxCmdletBase
         + $"'{outputPath}' is exported from the beginning; nothing is lost.";
 
     /// <summary>
-    /// What a caller can act on when the temp a checkpoint names is open in another run. Not
-    /// phrased as a fault: nothing has gone wrong with either file, two exports are writing one
-    /// -OutputFile, and the only thing the caller has to decide is which of them they meant to
-    /// keep - the one that finishes last is the one whose rows the output ends up with.
+    /// How the run ends when a file its own checkpoint stands for is open in another export, or
+    /// cannot be opened read-write by this account. Two files reach this, and the reading is one:
+    /// the rows the checkpoint counts are in that file and in no other, the checkpoint is the
+    /// only thing on disk that counts them, and this export has no pass to make that leaves the
+    /// pair intact - it saves its own position over the checkpoint at the first page boundary,
+    /// after which the completion door deletes what it finds there as its own. So it says what
+    /// it found, what it did not do, and the two ways out, and every file is exactly where it was.
+    ///
+    /// Which file decides what going on would cost, and for an output refusal
+    /// <see cref="CheckpointFileRefusal.Route"/> decides it further: a checkpoint naming a temp
+    /// that is still there holds the rows in that temp, and going on promotes them, replacing
+    /// the output outright; one naming a temp that has vanished holds them nowhere this run can
+    /// reach, and going on enumerates the collection again and replaces the output with the
+    /// result; and one naming no temp at all was written by a run appending straight into the
+    /// output, so the rows are in the output itself and going on cuts it back under its writer -
+    /// whose next write then lands past the hole that offset leaves. All three reach the same
+    /// claim on the same file, because a rename and a cut are both closed to a run that does not
+    /// hold it.
+    ///
+    /// Not phrased as a fault in the held case: nothing has gone wrong with either file, two
+    /// exports were pointed at one -OutputFile, and the caller has only to decide which of them
+    /// they meant. The unopenable case has no second export to go and find at all, and the
+    /// sentence written for the other one pointed the reader at a run that was never there
+    /// instead of at the open's own reason - which is named now, in <see cref="UnopenableReason
+    /// .Reason"/>, rather than assumed to be a permission: a symlink loop and an over-long path
+    /// reach it too, and granting write access fixes neither.
+    ///
+    /// The closing sentence is the caller's: a run that is stopping says so, and a -WhatIf pass
+    /// over the same two files says what would happen instead.
     /// </summary>
-    private static string HeldTempWarning(string checkpointPath, string outputPath, long items) =>
-        $"Another export is still writing the temp file the resume checkpoint at '{checkpointPath}' "
-        + $"names, so the {items} items it records are that run's and are not recovered here. Both "
-        + $"files are left as they are and '{outputPath}' is exported from the beginning. Two "
-        + "exports writing one -OutputFile replace each other's result; give each its own.";
+    private static string CheckpointFileStopMessage(CheckpointFileRefusal refusal,
+        string checkpointPath, string outputPath, PaginationCheckpoint checkpoint, string closing)
+    {
+        // What going on would cost past a held temp, which is the output beside it - named only
+        // where there is one. A checkpoint naming a temp is reached with nothing at -OutputFile
+        // at all, and a run that said it would replace that file sent the caller to look at
+        // something no export had written yet.
+        var goingOn = File.Exists(outputPath)
+            ? $"Going on would replace '{outputPath}' and save this run's position over the "
+              + "checkpoint that counts those items."
+            : "Going on would save this run's position over the checkpoint that counts those "
+              + "items.";
+
+        // The output is unopenable rather than held. The three routes agree past this point -
+        // the code beyond this check falls through to the same place a file that never held the
+        // recorded items reaches, which deletes the checkpoint and replaces the output at the
+        // completion that follows - so only the first clause, naming where the items are now,
+        // and the recovery word in the advice change per route.
+        string UnopenableOutputSentence()
+        {
+            var reason = refusal.Reason!.Value;
+            var openFailed = $"'{outputPath}' could not be opened for writing: {reason.Reason}.";
+            var recovers = refusal.Route switch
+            {
+                CheckpointStopRoute.Promoting => " to recover them",
+                CheckpointStopRoute.FreshAfterVanishedTemp => "",
+                _ => " to resume from it",
+            };
+            // Four ways out, because the causes do not share one. A permission on the file is
+            // granted; a permission on the directory holding it is granted there, and the file
+            // this sentence names is one the caller cannot reach to change or remove; a
+            // directory at the path is removed or pointed away from, and no grant would have
+            // made it writable at an offset; and a loop, an over-long path, a socket or a pipe
+            // is none of those - what this run can honestly say about them is what failed.
+            var advice = reason.IsDirectory
+                ? $"Remove it (or point -OutputFile elsewhere) and run again{recovers}, or "
+                  + "remove the checkpoint to export afresh."
+                : reason.IsUnsearchableParent
+                    ? $"Grant access to that directory and run again{recovers}, or remove the "
+                      + "checkpoint to export afresh."
+                    : reason.IsPermission
+                        ? $"Grant write access to that file and run again{recovers}, or remove "
+                          + "it and the checkpoint to export afresh."
+                        : $"Fix that and run again{recovers}, or remove it and the checkpoint to "
+                          + "export afresh.";
+
+            return refusal.Route switch
+            {
+                CheckpointStopRoute.Promoting =>
+                    $"{openFailed} The resume checkpoint at '{checkpointPath}' records "
+                    + $"{checkpoint.ItemsCollected} items into the temp '{checkpoint.TempFile}'; "
+                    + $"this run cannot promote them into '{outputPath}'. Going on would delete "
+                    + $"the checkpoint that counts them and replace that file. {closing} {advice}",
+
+                CheckpointStopRoute.FreshAfterVanishedTemp =>
+                    $"{openFailed} The resume checkpoint at '{checkpointPath}' recorded "
+                    + $"{checkpoint.ItemsCollected} items into a temp that is gone; this run "
+                    + $"cannot export a fresh copy into '{outputPath}' either. Going on would "
+                    + $"delete the checkpoint that counts them and replace that file. {closing} "
+                    + $"{advice}",
+
+                _ =>
+                    $"{openFailed} The resume checkpoint at '{checkpointPath}' records "
+                    + $"{checkpoint.ItemsCollected} items into it, so this run can neither "
+                    + "resume into it nor say whether those items are still there. Going on "
+                    + "would delete the checkpoint that counts them and replace that file. "
+                    + $"{closing} {advice}",
+            };
+        }
+
+        return (refusal.File, refusal.Held) switch
+        {
+            (CheckpointFile.NamedTemp, true) =>
+                "Another export is still writing the temp file the resume checkpoint at "
+                + $"'{checkpointPath}' names, so the {checkpoint.ItemsCollected} items it records "
+                + $"are that run's. {goingOn} {closing} Wait for that export to finish, or give "
+                + "this one its own -OutputFile and -CheckpointPath.",
+
+            (CheckpointFile.NamedTemp, false) =>
+                $"The temp file '{checkpoint.TempFile}' that the resume checkpoint at "
+                + $"'{checkpointPath}' names cannot be opened for writing by this account - the "
+                + "open was refused on permissions, not on sharing - so the "
+                + $"{checkpoint.ItemsCollected} items it records cannot be recovered here. "
+                + $"{goingOn} {closing} Grant write access to that file and run again to recover "
+                + "them, or remove it and the checkpoint to export afresh.",
+
+            (CheckpointFile.Output, true) => refusal.Route switch
+            {
+                CheckpointStopRoute.Promoting =>
+                    $"Another export is still writing '{outputPath}'. The resume checkpoint at "
+                    + $"'{checkpointPath}' records {checkpoint.ItemsCollected} items into the "
+                    + $"temp '{checkpoint.TempFile}'; going on would replace '{outputPath}' with "
+                    + "them under the run that holds it, and save this run's position over the "
+                    + $"checkpoint that counts those items. {closing} Wait for that export to "
+                    + "finish, or give this one its own -OutputFile and -CheckpointPath.",
+
+                CheckpointStopRoute.FreshAfterVanishedTemp =>
+                    $"Another export is still writing '{outputPath}'. The resume checkpoint at "
+                    + $"'{checkpointPath}' recorded {checkpoint.ItemsCollected} items into a "
+                    + "temp that is gone; going on would export from the beginning and replace "
+                    + $"'{outputPath}' under the run that holds it, and save this run's position "
+                    + $"over the checkpoint that counts those items. {closing} Wait for that "
+                    + "export to finish, or give this one its own -OutputFile and "
+                    + "-CheckpointPath.",
+
+                _ =>
+                    $"Another export is still writing '{outputPath}', which the resume "
+                    + $"checkpoint at '{checkpointPath}' records {checkpoint.ItemsCollected} "
+                    + "items into. Going on would cut that file back under it and save this "
+                    + "run's position over the checkpoint that counts those items. "
+                    + $"{closing} Wait for that export to finish, or give this one its own "
+                    + "-OutputFile and -CheckpointPath.",
+            },
+
+            _ => UnopenableOutputSentence(),
+        };
+    }
+
+    /// <summary>
+    /// The record the run ends on, which is that sentence in the present tense under an id and a
+    /// category naming which file the claim failed on and which of the two ways it failed.
+    /// </summary>
+    private static ErrorRecord CheckpointFileStop(CheckpointFileRefusal refusal,
+        string checkpointPath, string outputPath, PaginationCheckpoint checkpoint) =>
+        new(new InvalidOperationException(CheckpointFileStopMessage(refusal, checkpointPath,
+                outputPath, checkpoint, RunStopsHere)),
+            (refusal.File, refusal.Held) switch
+            {
+                (CheckpointFile.NamedTemp, true) => "CheckpointTempHeld",
+                (CheckpointFile.NamedTemp, false) => "CheckpointTempUnopenable",
+                (CheckpointFile.Output, true) => "CheckpointOutputHeld",
+                _ => "CheckpointOutputUnopenable",
+            },
+            // ResourceBusy for a file another run has, which is what a caller waits out. Past
+            // that the category follows the open's own reason rather than assuming a
+            // permission: PermissionDenied is a mode this account can be granted, and a symlink
+            // loop, an over-long path, a socket, a FIFO or a directory at the path is none -
+            // InvalidOperation says so, and a refusal that carries no reason at all is the
+            // temp's, whose own sentence names permissions.
+            refusal.Held
+                ? ErrorCategory.ResourceBusy
+                : refusal.Reason is { IsPermission: false }
+                    ? ErrorCategory.InvalidOperation
+                    : ErrorCategory.PermissionDenied,
+            checkpointPath);
+
+    /// <summary>
+    /// How the run ends when the copy a promotion stages beside the output could not be written,
+    /// or could not be moved onto the output once it was. Nothing here is a file that has gone
+    /// missing, and reading it as one was what deleted the checkpoint: every item it counts is in
+    /// the temp it names, whole and claimable, and the run that comes back stages the same bytes
+    /// over the same output. So the sentence says where those items are, what failed and where,
+    /// and that both files are as they were found - and the run stops rather than export past a
+    /// position it would then save over.
+    /// </summary>
+    /// <param name="tempName">The temp those items are in. The checkpoint's own record of it
+    /// where it has one, and the file adoption picked where the checkpoint predates that field:
+    /// either way it is the file the reader has to keep, and a sentence that read it off the
+    /// checkpoint named nothing at all on the adoption route.</param>
+    /// <param name="removedKind">What the sweep took off the staging name on the way here, where
+    /// it took anything: the run deleted an entry and then stopped, and a reader who is told only
+    /// that the staging failed goes looking for a file that is no longer there. Named in the
+    /// stop rather than warned about separately, because a warning written before a terminating
+    /// error is what -WarningAction Stop ends the run on instead of this sentence.</param>
+    private static string CheckpointStagingStopMessage(StagingFailure staging,
+        string checkpointPath, string outputPath, PaginationCheckpoint checkpoint, string tempName,
+        string? removedKind, string closing) =>
+        $"The {checkpoint.ItemsCollected} items the resume checkpoint at '{checkpointPath}' "
+        + $"records are in '{tempName}', whole, but staging them into '{outputPath}' "
+        + $"failed at '{staging.Path}': {staging.Reason}"
+        + (removedKind != null
+            ? $", after removing what stood at the staging name: {removedKind}"
+            : "")
+        + $". {closing} fix that and run again to "
+        + "recover them, or remove the temp and the checkpoint to export afresh.";
+
+    /// <inheritdoc cref="CheckpointStagingStopMessage"/>
+    /// <summary>
+    /// The record the run ends on. A write that did not happen, under the checkpoint whose items
+    /// it was for: not a claim refused on either of the two files, which is what the ids and
+    /// categories beside this one are about.
+    /// </summary>
+    private static ErrorRecord CheckpointStagingStop(StagingFailure staging, string checkpointPath,
+        string outputPath, PaginationCheckpoint checkpoint, string tempName,
+        string? removedKind) =>
+        new(new InvalidOperationException(CheckpointStagingStopMessage(staging, checkpointPath,
+                outputPath, checkpoint, tempName, removedKind, NothingWasChanged)),
+            "CheckpointStagingFailed", ErrorCategory.WriteError, checkpointPath);
 
     /// <summary>
     /// The form of this export's URL a checkpoint on disk was written under - whether the
@@ -741,7 +1130,7 @@ public class ExportMgxCollection : MgxCmdletBase
     /// this run would have built first.
     /// </summary>
     private (bool IncludeCount, bool SuppressTop)? AttemptFormOf(
-        PaginationCheckpoint? checkpoint, string outputPath, bool countAutoAdded)
+        PaginationCheckpoint? checkpoint, string outputPath, bool countAutoAdded, bool mayWrite)
     {
         if (checkpoint == null) return null;
         bool[] counts = countAutoAdded ? [true, false] : [false];
@@ -750,7 +1139,7 @@ public class ExportMgxCollection : MgxCmdletBase
         {
             foreach (var suppressTop in tops)
             {
-                if (DescribesThisExport(checkpoint, outputPath, includeCount, suppressTop))
+                if (DescribesThisExport(checkpoint, outputPath, includeCount, suppressTop, mayWrite))
                     return (includeCount, suppressTop);
             }
         }
@@ -772,15 +1161,63 @@ public class ExportMgxCollection : MgxCmdletBase
     /// promoting and trimming instead of before it, which is not a comparison that can refuse.
     /// </summary>
     private bool DescribesThisExport(PaginationCheckpoint checkpoint, string outputPath,
-        bool includeCount, bool suppressTop)
-        => OwnershipOf(checkpoint, outputPath, includeCount, suppressTop) == CheckpointOwnership.Mine;
+        bool includeCount, bool suppressTop, bool mayWrite)
+        => OwnershipOf(checkpoint, outputPath, includeCount, suppressTop, mayWrite)
+            == CheckpointOwnership.Mine;
+
+    /// <summary>
+    /// Which reading refused the checkpoint this run found at -CheckpointPath, or null where
+    /// nothing refused it. Set wherever a refusal that leaves the file standing is reported and
+    /// never cleared - an attempt rebuilds the request URL, so a checkpoint refused under one
+    /// form of it can compare equal under another, and that is not evidence of anything.
+    ///
+    /// Read on the way out of a run that completed, where the delete would otherwise take a
+    /// position this run had warned it would leave alone. One of the three refusals records a
+    /// reading here: the ownership verdict, where whatever wrote the file resumes from exactly
+    /// it. A checkpoint refused because the endpoint made this run rebuild the request records
+    /// none - it is a position into an enumeration this run replaces and nothing else, so it
+    /// goes with the completed export and the temp it names is this run's own to sweep. And a
+    /// checkpoint whose temp, or whose output, this run could not claim never reaches a door:
+    /// that run stops at the reconcile, with nothing enumerated and nothing written.
+    ///
+    /// Not something <see cref="_refusedCheckpointTemp"/> can answer either: a checkpoint
+    /// written by a run that was appending to its output names no temp at all, and refusing
+    /// that one counts the same.
+    /// </summary>
+    private SparedCheckpoint? _sparedCheckpoint;
 
     /// <summary>
     /// The temp file a checkpoint this run refused still points at, or null. Refusing is the
     /// whole response: the checkpoint is left where it is because the export that wrote it
     /// resumes from exactly that, and the items it counted are in the temp it names.
+    /// <para>
+    /// Null is two readings, and <see cref="_sparedCheckpoint"/> tells them apart: nothing was
+    /// refused, or what was refused records no temp name. The second stands for a temp all the
+    /// same - a checkpoint written before the name was recorded says only that the items are
+    /// somewhere beside this output - so the sweep reads the pair rather than this alone.
+    /// </para>
     /// </summary>
     private string? _refusedCheckpointTemp;
+
+    /// <summary>
+    /// What a run would stop on - a temp it could not claim, or the output it would append to -
+    /// worked out by the preview pass above the ShouldProcess gate, or null where nothing would
+    /// stop it. The gate names one of two actions on -OutputFile and "nothing at all" is
+    /// neither, so the sentence goes out beside it - and only on the -WhatIf side, where a real
+    /// run has already ended on the same condition by the time the gate is past.
+    /// </summary>
+    private string? _wouldStopOnCheckpointFile;
+
+    /// <summary>
+    /// What a run would take off the staging name before it staged its copy there, worked out by
+    /// the preview pass and reported beside the gate; null where the name is clear. The pass
+    /// used to clear the name itself, which made its deletions as real as a run's: a caller who
+    /// ran -WhatIf to find out what would be touched had the link, the pipe or the leftover copy
+    /// at that name deleted in order to be told that nothing would be. It is named now and left
+    /// where it is, and the create test that follows a clear name is skipped for it - nothing
+    /// standing at the name can be tested without taking it off.
+    /// </summary>
+    private string? _wouldRemoveAtStagingName;
 
     /// <summary>
     /// The temp a failed attempt of this run left on disk for a checkpoint of its own, or null.
@@ -812,9 +1249,11 @@ public class ExportMgxCollection : MgxCmdletBase
     private static bool RefusedTempIsOnDisk(string? tempFile, string outputPath)
     {
         if (tempFile == null || tempFile != Path.GetFileName(tempFile)) return false;
-        if (!IsRunTempName(Path.GetFileName(outputPath), tempFile)) return false;
         var dir = Path.GetDirectoryName(outputPath);
-        return !string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, tempFile));
+        if (string.IsNullOrEmpty(dir)) return false;
+        if (!IsRunTempName(dir, Path.GetFileName(outputPath), tempFile, mayWrite: true))
+            return false;
+        return File.Exists(Path.Combine(dir, tempFile));
     }
 
     /// <summary>Whose the checkpoint on disk is, and where it is not this export's, why not.</summary>
@@ -845,11 +1284,11 @@ public class ExportMgxCollection : MgxCmdletBase
     /// and is refused with the enumerations that do not match.
     /// </summary>
     private CheckpointOwnership OwnershipOf(PaginationCheckpoint checkpoint, string outputPath,
-        bool includeCount, bool suppressTop)
+        bool includeCount, bool suppressTop, bool mayWrite)
     {
-        if ((checkpoint.OutputFile != null || checkpoint.DataLength != null)
+        if (RecordsAFileToWeigh(checkpoint)
             && !RecordedOutputMatches(checkpoint.OutputFile, checkpoint.TempFile,
-                   checkpoint.DataLength, outputPath))
+                   checkpoint.DataLength, outputPath, mayWrite))
         {
             return checkpoint.OutputFile != null
                 ? CheckpointOwnership.AnotherExports
@@ -867,7 +1306,9 @@ public class ExportMgxCollection : MgxCmdletBase
     /// whether the run that follows appends to the output rather than exporting into a fresh
     /// temp. With <paramref name="apply"/> false nothing is written, deleted or warned about:
     /// the ShouldProcess gate has to name the action before the run is allowed to take any, and
-    /// -WhatIf has to leave every file it found exactly as it found it.
+    /// -WhatIf has to leave every file it found exactly as it found it - and leave the directory
+    /// holding them as it found it too, which is why the flag also decides whether the case rule
+    /// of that directory may be probed or has to be assumed.
     ///
     /// A checkpoint records which file its items were written to and how many bytes of that
     /// file they occupy, which makes three cases decidable instead of guessed.
@@ -914,12 +1355,14 @@ public class ExportMgxCollection : MgxCmdletBase
             return false;
         }
 
-        var ownership = OwnershipOf(checkpoint, outputPath, includeCount, suppressTop);
+        var ownership = OwnershipOf(checkpoint, outputPath, includeCount, suppressTop, apply);
         if (ownership != CheckpointOwnership.Mine)
         {
             if (apply)
             {
-                // What the refusal leaves has to survive the sweep in this same run.
+                // What the refusal leaves has to survive this same run - the sweep a few
+                // lines on, and the delete the completion path ends with.
+                _sparedCheckpoint = SparedCheckpoint.NotThisRuns;
                 _refusedCheckpointTemp = checkpoint.TempFile;
                 WriteWarning(ownership == CheckpointOwnership.AnotherExports
                     ? ForeignCheckpointWarning(checkpointPath, outputPath)
@@ -947,12 +1390,60 @@ public class ExportMgxCollection : MgxCmdletBase
             // output it could be merged into - exactly the case this path used to be limited to.
             if (!File.Exists(outputPath))
             {
-                if (apply
-                        ? TryAdoptOrphanedTemp(outputPath, checkpoint.ItemsCollected)
-                        : CanAdoptOrphanedTemp(outputPath, checkpoint.ItemsCollected))
+                string? adoptedTemp;
+                StagingFailure? adoptStaging;
+                StagingRemoval? adoptSwept;
+                var adopted = apply
+                    ? TryAdoptOrphanedTemp(outputPath, checkpoint.ItemsCollected,
+                        out adoptedTemp, out adoptStaging, out adoptSwept)
+                    : CanAdoptOrphanedTemp(outputPath, checkpoint.ItemsCollected,
+                        out adoptedTemp, out adoptStaging, out adoptSwept);
+
+                // What the adoption took off its own staging name before it created one there,
+                // or - on the preview, which takes nothing off it - what a run would. The
+                // applying pass records the deletion here, where it happened, and warns about it
+                // below once this run's own outcome for the recovery is known: a warning is a
+                // terminating error under -WarningAction Stop, so written here it ended the run
+                // with the entry deleted, the items still in the temp and nothing recovered.
+                if (adoptSwept is { } adoptRemoval)
+                {
+                    if (apply) WriteVerbose(adoptRemoval.Sentence);
+                    else _wouldRemoveAtStagingName = adoptRemoval.Sentence;
+                }
+
+                // The copy could not be staged beside the output. Every item the checkpoint
+                // counts is in the temp this names, whole, so this is not the route below for a
+                // checkpoint whose output has gone: that one deletes the position counting them
+                // and exports afresh, and reached from here it did so with the temp holding
+                // every one.
+                if (adoptStaging is { } adoptFailure)
                 {
                     if (apply)
+                    {
+                        ThrowTerminatingError(CheckpointStagingStop(adoptFailure, checkpointPath,
+                            outputPath, checkpoint, adoptedTemp!, adoptSwept?.Kind));
+                        return false;
+                    }
+
+                    // The preview pass reaches the same name and may not throw. What a real run
+                    // would do there is stop, which is not one of the two actions the gate names.
+                    _wouldStopOnCheckpointFile = CheckpointStagingStopMessage(adoptFailure,
+                        checkpointPath, outputPath, checkpoint, adoptedTemp!, null,
+                        NothingWouldBeChanged);
+                    return false;
+                }
+
+                if (adopted)
+                {
+                    if (apply)
+                    {
                         WriteWarning($"Recovered {checkpoint.ItemsCollected} items from an interrupted export's temp file. Resuming from checkpoint.");
+                        // And what the sweep took off the staging name, now that what this run
+                        // did about the checkpoint is on the stream in front of it. Under
+                        // -WarningAction Stop the run ends here, with the items recovered into
+                        // the output and the position they resume from still on disk.
+                        if (adoptSwept is { } removed) WriteWarning(removed.Sentence);
+                    }
                     return true;
                 }
 
@@ -960,6 +1451,7 @@ public class ExportMgxCollection : MgxCmdletBase
                 {
                     WriteWarning("Checkpoint found but output file is missing. Deleting stale checkpoint and starting fresh.");
                     PaginationCheckpoint.Delete(checkpointPath);
+                    if (adoptSwept is { } removedAnyway) WriteWarning(removedAnyway.Sentence);
                 }
                 return false;
             }
@@ -984,24 +1476,101 @@ public class ExportMgxCollection : MgxCmdletBase
 
         if (checkpoint.TempFile != null)
         {
-            if (apply
-                    ? TryPromoteNamedTemp(outputPath, checkpoint.TempFile, dataLength)
-                    : CanPromoteNamedTemp(outputPath, checkpoint.TempFile, dataLength))
+            TempPromotion promotion;
+            UnopenableReason? promotionReason;
+            StagingFailure? promotionStaging = null;
+            StagingRemoval? promotionSwept;
+            if (apply)
+                promotion = TryPromoteNamedTemp(outputPath, checkpoint.TempFile, dataLength,
+                    out promotionReason, out promotionStaging, out promotionSwept);
+            else
+                promotion = CanPromoteNamedTemp(outputPath, checkpoint.TempFile, dataLength,
+                    out promotionReason, out promotionStaging, out promotionSwept);
+
+            // What the promotion took off its own staging name before it created one there, or -
+            // on the preview, which takes nothing off it - what a run would. The applying pass
+            // records the deletion here, where it happened, and warns about it below once this
+            // run's own outcome for the recovery is known: a warning is a terminating error
+            // under -WarningAction Stop, so written here it ended the run with the entry
+            // deleted, the items still in the temp and nothing recovered.
+            if (promotionSwept is { } promotionRemoval)
+            {
+                if (apply) WriteVerbose(promotionRemoval.Sentence);
+                else _wouldRemoveAtStagingName = promotionRemoval.Sentence;
+            }
+
+            // The copy could not be staged, or could not be moved once it was. Both files are
+            // where they were found and every item the checkpoint counts is still in the temp it
+            // names, so this is not the route below for a temp whose items are in no file: that
+            // one deletes the position counting them and exports afresh over the output, and
+            // reached from here it did so with the temp holding all of them.
+            if (promotion == TempPromotion.StagingFailed)
             {
                 if (apply)
                 {
-                    WriteWarning($"Recovered {checkpoint.ItemsCollected} items from an interrupted export's temp file. Resuming from checkpoint.");
-                    // Those items are the output now. Repoint the checkpoint at it before
+                    ThrowTerminatingError(CheckpointStagingStop(promotionStaging!.Value,
+                        checkpointPath, outputPath, checkpoint, checkpoint.TempFile,
+                        promotionSwept?.Kind));
+                    return false;
+                }
+
+                // The preview pass reaches the same name and may not throw. What a real run
+                // would do there is stop, which is not one of the two actions the gate names.
+                _wouldStopOnCheckpointFile = CheckpointStagingStopMessage(promotionStaging!.Value,
+                    checkpointPath, outputPath, checkpoint, checkpoint.TempFile, null,
+                    NothingWouldBeChanged);
+                return false;
+            }
+
+            // The output the promotion would land in is another run's, or is not a file this
+            // account can write at the recorded offset. The same stop the branch below reaches,
+            // about the same file for the same reason: the run that has the output is appending
+            // to it, and this one would be replacing it under them.
+            //
+            // Asked for before the move, so nothing was replaced - and the temp, with the
+            // checkpoint still naming it, is exactly as it was found, since the temp is unlinked
+            // only where the output was kept. So the position and the file it counts are the
+            // pair they were, and the run that comes back promotes the same rows to the same
+            // length over the same output.
+            if (promotion is TempPromotion.OutputHeld or TempPromotion.OutputUnopenable)
+            {
+                var promotedOutputRefusal = new CheckpointFileRefusal(CheckpointFile.Output,
+                    promotion == TempPromotion.OutputHeld
+                        ? ClaimRefusal.AnotherRunHasIt
+                        : ClaimRefusal.CannotBeOpened,
+                    CheckpointStopRoute.Promoting, promotionReason);
+                if (apply)
+                {
+                    ThrowTerminatingError(CheckpointFileStop(promotedOutputRefusal, checkpointPath,
+                        outputPath, checkpoint));
+                    return false;
+                }
+
+                // The preview pass asks the same question of the same file and may not throw:
+                // it reports what a run would do and does none of it. What it would do is stop,
+                // which is not one of the two actions the ShouldProcess gate names, so the gate
+                // writes this sentence beside the one it does name.
+                _wouldStopOnCheckpointFile = CheckpointFileStopMessage(promotedOutputRefusal,
+                    checkpointPath, outputPath, checkpoint, RunWouldStopHere);
+                return false;
+            }
+
+            if (promotion == TempPromotion.Taken)
+            {
+                if (apply)
+                {
+                    // Those items are the output now, and the output is this run's - the
+                    // promotion kept it through the move. Repoint the checkpoint at it before
                     // anything else can fail, so a second interruption cannot promote the same
-                    // temp again.
-                    checkpoint.TempFile = null;
-                    checkpoint.OutputFile = Path.GetFullPath(outputPath);
-                    checkpoint.DataLength = new FileInfo(outputPath).Length;
-                    try { checkpoint.Save(checkpointPath); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        WriteWarning($"Checkpoint save failed after recovery: {ex.Message}");
-                    }
+                    // temp again - and before the warning below, which under -WarningAction Stop
+                    // is where the run ends: the position on disk has to be the one that
+                    // resumes from what is now in the output.
+                    RepointCheckpointAtHeldOutput(checkpoint, checkpointPath, outputPath,
+                        HeldOutput!);
+                    WriteWarning($"Recovered {checkpoint.ItemsCollected} items from an interrupted export's temp file. Resuming from checkpoint.");
+                    // And what the sweep took off the staging name, now that what this run did
+                    // about the checkpoint is on the stream in front of it.
+                    if (promotionSwept is { } removed) WriteWarning(removed.Sentence);
                 }
                 return true;
             }
@@ -1012,16 +1581,79 @@ public class ExportMgxCollection : MgxCmdletBase
             // the position it comes back to, and this run exports from the beginning into a temp
             // of its own. Deleting the checkpoint below would be the same mistake as unlinking
             // the temp, one file over.
-            if (NamedTempIsHeld(outputPath, checkpoint.TempFile, dataLength))
+            //
+            // Or the claim failed because this account cannot open the file read-write, which
+            // leaves both files in the same place and has no second export behind it. The
+            // refusal is the same; only what it can honestly say about the cause differs.
+            var namedTempRefusal = new CheckpointFileRefusal(CheckpointFile.NamedTemp,
+                RefusalForNamedTemp(outputPath, checkpoint.TempFile, dataLength, apply));
+            if (namedTempRefusal.Refuses)
+            {
+                // The run ends here, before the client is asked for, before the sweep a few
+                // lines on, before a temp of this run's own exists and before anything is
+                // written to -OutputFile or -CheckpointPath.
+                //
+                // Leaving the two files alone and exporting anyway was not enough, because
+                // exporting IS what takes them: the first page boundary saves this run's own
+                // position over the same path, the completion door then deletes what it finds
+                // there as its own, and the holder's temp is an orphan the next sweep takes
+                // with the rows still in it. The property the caller wants - this run proceeds
+                // and the other run's work survives - is not available at any price, since
+                // proceeding means replacing the output the checkpoint records and saving over
+                // the checkpoint itself. So this run does not proceed.
+                //
+                // The rows it is protecting are in that temp and in no other file, and the
+                // checkpoint is the only thing on disk that counts them: a holder still running
+                // deletes it itself on the way out, a holder that dies keeps its temp for
+                // exactly as long as a checkpoint counting it is there, and where the claim
+                // failed on permissions instead it is the position write access has to be
+                // granted for.
+                if (apply)
+                {
+                    ThrowTerminatingError(CheckpointFileStop(namedTempRefusal, checkpointPath,
+                        outputPath, checkpoint));
+                    return false;
+                }
+
+                // The preview pass reaches the same two files and may not throw: -WhatIf reports
+                // what a run would do and does none of it. What it would do is stop, which is
+                // not one of the two actions the ShouldProcess gate below names, so the gate
+                // writes this sentence beside the one it does name.
+                _wouldStopOnCheckpointFile = CheckpointFileStopMessage(namedTempRefusal,
+                    checkpointPath, outputPath, checkpoint, RunWouldStopHere);
+                return false;
+            }
+
+            // The temp is not there, or is shorter than the length recorded for it - and the
+            // first of those is what a promotion leaves for the instant between its unlink and
+            // the save that repoints the position at the output. A second run over the same
+            // command line, released with the first, read that instant and said those items were
+            // not on disk, deleted the position counting them, exported from the beginning and
+            // moved its own temp over the output at the end - which was the promoting run's
+            // output, held and being appended to. So the output is asked about before any of
+            // that, and a promoter holding it ends this run where the branch below ends it.
+            //
+            // Only the refusals are read. An output nothing holds is not evidence that a
+            // promotion landed in it, whatever it measures: this checkpoint records its items
+            // into the temp, and a previous export's file standing at the path measures exactly
+            // what a promotion would have left about as often as a promoted one does - two rows
+            // of one shape being two rows of another shape's length. So that case takes the route
+            // it always took, which replaces the whole file rather than cutting it back to an
+            // offset counted in a different one.
+            var vanishedTempRefusal = new CheckpointFileRefusal(CheckpointFile.Output,
+                RefusalForStandingOutput(outputPath, out var vanishedTempReason),
+                CheckpointStopRoute.FreshAfterVanishedTemp, vanishedTempReason);
+            if (vanishedTempRefusal.Refuses)
             {
                 if (apply)
                 {
-                    // What the refusal leaves has to survive the sweep in this same run: the
-                    // holder can be gone by the time the sweep runs, and the checkpoint left
-                    // standing over that temp is what makes it recoverable rather than stale.
-                    _refusedCheckpointTemp = checkpoint.TempFile;
-                    WriteWarning(HeldTempWarning(checkpointPath, outputPath, checkpoint.ItemsCollected));
+                    ThrowTerminatingError(CheckpointFileStop(vanishedTempRefusal, checkpointPath,
+                        outputPath, checkpoint));
+                    return false;
                 }
+
+                _wouldStopOnCheckpointFile = CheckpointFileStopMessage(vanishedTempRefusal,
+                    checkpointPath, outputPath, checkpoint, RunWouldStopHere);
                 return false;
             }
 
@@ -1031,15 +1663,54 @@ public class ExportMgxCollection : MgxCmdletBase
                     $"The interrupted export's temp file is missing or incomplete, so the {checkpoint.ItemsCollected} items it "
                     + "recorded are not on disk. Exporting again from the beginning; nothing is lost.");
                 PaginationCheckpoint.Delete(checkpointPath);
+                // And what the sweep took off the staging name, after what this run did about
+                // the checkpoint.
+                if (promotionSwept is { } removedAnyway) WriteWarning(removedAnyway.Sentence);
             }
             return false;
         }
 
-        if (apply
-                ? TryTrimOutputToCheckpoint(outputPath, dataLength)
-                : CanTrimOutputToCheckpoint(outputPath, dataLength))
-            return true;
+        // The checkpoint names no temp, so the run that wrote it was appending straight into the
+        // output: the items it counts are in that file, and cutting it back to the recorded
+        // length is what stops the ones written after the last save from being written twice.
+        //
+        // Which is the same claim on the output that the branch above makes on a temp, and for
+        // the same reason. A run that has resumed once holds -OutputFile open with the rows in
+        // it, and its checkpoint names no temp for a second run over the same command line to
+        // refuse it by - so that run judged the checkpoint its own, cut the live file back to
+        // its own offset and appended, and the holder's next write landed past the hole.
+        //
+        // So the claim is not let go. The handle it opens is the handle this run writes through:
+        // the cut below is a SetLength on it, the writer downstream appends onto it, and it is
+        // released where the writing ends. Asked for and released here, a page-fetch before the
+        // writer took an open of its own, it left a window a second run walked straight through
+        // - both runs past the same claim, both cutting, both appending.
+        CheckpointOutput taken;
+        UnopenableReason? takenReason;
+        if (apply) taken = TakeOutputForCheckpoint(outputPath, dataLength, out takenReason);
+        else taken = WouldTakeOutputForCheckpoint(outputPath, dataLength, out takenReason);
+        if (taken == CheckpointOutput.Taken) return true;
 
+        var outputRefusal = new CheckpointFileRefusal(CheckpointFile.Output, RefusalFrom(taken),
+            CheckpointStopRoute.Appending, takenReason);
+        if (outputRefusal.Refuses)
+        {
+            // Where the temp branch ends the run, before the client, the sweep and the first
+            // page - and on the preview pass, where it says the same thing in the future tense.
+            if (apply)
+            {
+                ThrowTerminatingError(CheckpointFileStop(outputRefusal, checkpointPath,
+                    outputPath, checkpoint));
+                return false;
+            }
+
+            _wouldStopOnCheckpointFile = CheckpointFileStopMessage(outputRefusal, checkpointPath,
+                outputPath, checkpoint, RunWouldStopHere);
+            return false;
+        }
+
+        // Not the file the checkpoint describes - absent, or shorter than the length recorded -
+        // so the items it counts are in no file and there is nothing to append to.
         if (apply)
         {
             WriteWarning(
@@ -1047,6 +1718,7 @@ public class ExportMgxCollection : MgxCmdletBase
                 + "Exporting again from the beginning; nothing is lost.");
             PaginationCheckpoint.Delete(checkpointPath);
         }
+
         return false;
     }
 }

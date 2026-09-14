@@ -74,7 +74,7 @@ CIRCUIT BREAKER
     Setting                                Default     Hard Max    Purpose
     -------                                -------     --------    -------
     CircuitBreakerFailureRatio             10%         100%        Failure ratio to trip
-    CircuitBreakerMinThroughput            40          1,000       Min requests before evaluating
+    CircuitBreakerMinThroughput            40          1,000       Requests before evaluating (2+)
     CircuitBreakerSamplingDurationSeconds  30s         300s        Evaluation window
     CircuitBreakerDurationSeconds          15s         300s        Open-state duration
 

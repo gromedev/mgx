@@ -6,7 +6,9 @@ namespace Mgx.Cmdlets.Cmdlets.Configuration;
 
 /// <summary>
 /// Removes the Polly resilience injection from the Microsoft.Graph SDK's HTTP transport.
-/// Restores the original SDK HttpClient that was saved by Enable-MgxResilience.
+/// Restores the original SDK HttpClient that was saved by Enable-MgxResilience, when the
+/// session is still holding the wrapper this module installed; a client the SDK has replaced
+/// since the injection is left as it was found.
 /// </summary>
 [Cmdlet(VerbsLifecycle.Disable, "MgxResilience", SupportsShouldProcess = true)]
 public class DisableMgxResilience : PSCmdlet
@@ -80,16 +82,39 @@ public class DisableMgxResilience : PSCmdlet
                 return;
             }
 
-            if (!ShouldProcess("Microsoft.Graph SDK HttpClient",
-                "Restore original SDK HttpClient (remove Polly resilience)"))
+            // Read before the gate, so what a preview reports is decided from state this cmdlet
+            // has only looked at. Whether the client on the session is one of ours is the same
+            // question the teardown asks through TryRestoreGenuineSdkClient, asked the same way:
+            // the bridge-target map, which spans import cycles, rather than the statics a removal
+            // drops.
+            var currentClient = clientProp.GetValue(instance) as HttpClient;
+            var sessionHoldsOurWrapper = EnableMgxResilience.IsInjectedWrapper(currentClient);
+
+            // And it decides the action the gate names, because the two branches below do
+            // different things. Only one of them restores anything: the other releases the
+            // injection's own state and leaves the client the session is holding exactly where
+            // it found it. Naming a restore for both described a run that, in that case, was
+            // never going to happen - and the name is all a caller running -WhatIf gets.
+            var action = sessionHoldsOurWrapper
+                ? "Restore original SDK HttpClient (remove Polly resilience)"
+                : "Release Mgx resilience state and leave the SDK HttpClient as found";
+
+            if (!ShouldProcess("Microsoft.Graph SDK HttpClient", action))
                 return;
 
-            // Verify the current client is actually ours before restoring
-            var currentClient = clientProp.GetValue(instance) as HttpClient;
-            if (currentClient != null && !ReferenceEquals(currentClient, EnableMgxResilience.ResilientSdkClient))
+            if (!sessionHoldsOurWrapper)
             {
-                WriteWarning("The current GraphHttpClient is not the one injected by Enable-MgxResilience. " +
-                           "Another module or Connect-MgGraph may have replaced it. Restoring original anyway.");
+                // The SDK built a new client after the injection went on - a Connect-MgGraph to
+                // another tenant does that - so OriginalSdkClient is the previous identity's
+                // client and installing it would put those credentials back under every SDK
+                // cmdlet. The injection's own state still has to go, and ReleaseInjection is the
+                // unwind module removal runs: it restores nothing here, because the client the
+                // session is holding is not a wrapper of ours to take off.
+                EnableMgxResilience.ReleaseInjection();
+                WriteWarning("The Microsoft.Graph SDK client was replaced after Enable-MgxResilience "
+                    + "ran (by Connect-MgGraph or another module), so it was not this module's to "
+                    + "restore and has been left as it was found. Mgx resilience is now off.");
+                return;
             }
 
             clientProp.SetValue(instance, originalClient);

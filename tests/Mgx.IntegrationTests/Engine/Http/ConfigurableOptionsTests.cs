@@ -171,11 +171,43 @@ public class ConfigurableOptionsTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
+    [InlineData(1)]
     [InlineData(1001)]
     public void CircuitBreakerMinThroughput_RejectsInvalidValues(int value)
     {
-        Assert.Throws<ArgumentOutOfRangeException>(
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(
             () => new ResilientGraphClientOptions { CircuitBreakerMinThroughput = value });
+        // Refused in the option's own terms, with the range it will take. Polly refuses 1 as
+        // well, but it does so while a later call is building the pipeline.
+        Assert.Contains("between 2 and 1,000", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(40)]
+    [InlineData(1000)]
+    public void CircuitBreakerMinThroughput_EveryAcceptedValueBuildsAPipeline(int value)
+    {
+        // The floor, the default and the ceiling. A value the option takes but the pipeline
+        // cannot hold would fail on the next request instead of at the set site, which is the
+        // whole point of the option validating at all.
+        ResiliencePipelineFactory.Reset();
+        try
+        {
+            var options = new ResilientGraphClientOptions
+            {
+                NoRateLimit = true,
+                CircuitBreakerMinThroughput = value
+            };
+
+            var (pipeline, _) = ResiliencePipelineFactory.GetOrCreate(options);
+
+            Assert.NotNull(pipeline);
+        }
+        finally
+        {
+            ResiliencePipelineFactory.Reset();
+        }
     }
 
     [Theory]

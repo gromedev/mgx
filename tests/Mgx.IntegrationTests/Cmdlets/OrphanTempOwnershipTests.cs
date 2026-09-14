@@ -27,6 +27,18 @@ public class OrphanTempOwnershipTests
         typeof(MgxCmdletBase).GetMethod(
             "TryAdoptOrphanedTemp", BindingFlags.Static | BindingFlags.NonPublic)!;
 
+    /// <summary>
+    /// The two arguments, followed by an empty slot for each out parameter the method carries.
+    /// Sized off the method, since reflection wants a slot for every one of them.
+    /// </summary>
+    private static bool TryAdopt(string outputPath, long itemCount)
+    {
+        var slots = new object?[Adopt.GetParameters().Length];
+        slots[0] = outputPath;
+        slots[1] = itemCount;
+        return (bool)Adopt.Invoke(null, slots)!;
+    }
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         private readonly Queue<(HttpStatusCode Status, string Body)> _steps = new();
@@ -98,7 +110,7 @@ public class OrphanTempOwnershipTests
             var theirs = Path.Combine(dir, $"users.jsonl.{Guid.NewGuid():N}.tmp");
             File.WriteAllLines(theirs, ["{\"id\":\"THEIRS-1\"}", "{\"id\":\"THEIRS-2\"}"]);
 
-            Assert.False((bool)Adopt.Invoke(null, [mine, 2L])!);
+            Assert.False(TryAdopt(mine, 2L));
 
             Assert.False(File.Exists(mine));
             Assert.True(File.Exists(theirs));
@@ -169,7 +181,7 @@ public class OrphanTempOwnershipTests
             var backup = Path.Combine(dir, "users.jsonl.backup.tmp");
             File.WriteAllLines(backup, ["{\"id\":\"BACKUP-1\"}", "{\"id\":\"BACKUP-2\"}"]);
 
-            Assert.False((bool)Adopt.Invoke(null, [output, 2L])!);
+            Assert.False(TryAdopt(output, 2L));
 
             Assert.False(File.Exists(output));
             Assert.True(File.Exists(backup));
@@ -251,6 +263,84 @@ public class OrphanTempOwnershipTests
     }
 
     /// <summary>
+    /// Whether the temps of two spellings cross is the filesystem's answer and not the
+    /// platform's. The comparison and the glob both took their rule from the operating system,
+    /// so a case-sensitive APFS volume - and a Windows directory flagged case-sensitive on its
+    /// own - was matched case-insensitively against a filesystem that keeps the two apart:
+    /// "Users.jsonl" and "users.jsonl" are two exports there, and one's temp was reachable by
+    /// the other's adoption and by its sweep.
+    ///
+    /// How this host gets there differs; what it asserts does not. Where the directory's own
+    /// probe answers case-sensitive the two files really are two, and where it does not the
+    /// answer is pinned so the same decision path still runs. Neither is skipped.
+    /// </summary>
+    [Fact]
+    public void An_export_does_not_adopt_the_other_spelling_of_its_output_where_case_is_kept()
+    {
+        var dir = NewDir();
+        var pinned = !MgxCmdletBase.DirectoryNamesAreCaseSensitive(dir, mayWrite: true);
+        if (pinned) MgxCmdletBase.SetDirectoryCaseSensitivity(dir, true);
+        try
+        {
+            var mine = Path.Combine(dir, "users.jsonl");
+            var theirs = Path.Combine(dir, $"Users.jsonl.{Guid.NewGuid():N}.tmp");
+            File.WriteAllLines(theirs, ["{\"id\":\"THEIRS-1\"}", "{\"id\":\"THEIRS-2\"}"]);
+
+            Assert.False(TryAdopt(mine, 2L));
+
+            Assert.False(File.Exists(mine));
+            Assert.True(File.Exists(theirs));
+            Assert.Equal(["{\"id\":\"THEIRS-1\"}", "{\"id\":\"THEIRS-2\"}"],
+                File.ReadAllLines(theirs));
+        }
+        finally
+        {
+            if (pinned) MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The same rule on the sweep, which is where it costs the other export its work rather
+    /// than this one its output: a fresh run deletes every "{output}.{guid}.tmp" beside it as
+    /// an orphan, and a temp whose name differs from this output's only in case is not beside
+    /// this output at all where the filesystem keeps the two apart. It was deleted from under
+    /// the run that was writing it.
+    /// </summary>
+    [Fact]
+    public void An_export_does_not_sweep_the_other_spelling_of_its_output_where_case_is_kept()
+    {
+        var dir = NewDir();
+        var pinned = !MgxCmdletBase.DirectoryNamesAreCaseSensitive(dir, mayWrite: true);
+        if (pinned) MgxCmdletBase.SetDirectoryCaseSensitivity(dir, true);
+        try
+        {
+            var mine = Path.Combine(dir, "users.jsonl");
+            var checkpoint = Path.Combine(dir, "run.checkpoint");
+            var theirs = Path.Combine(dir, $"Users.jsonl.{Guid.NewGuid():N}.tmp");
+            File.WriteAllLines(theirs, ["{\"id\":\"THEIRS-1\"}"]);
+
+            var handler = new ScriptedHandler();
+            using var transport = MgxTransportScope.Inject(handler);
+            handler.Queue(HttpStatusCode.OK, Page1);
+            handler.Queue(HttpStatusCode.OK, Page2);
+
+            Export(mine, checkpoint);
+
+            Assert.Equal(["{\"id\":\"u1\"}", "{\"id\":\"u2\"}", "{\"id\":\"u3\"}"],
+                File.ReadAllLines(mine));
+            Assert.True(File.Exists(theirs),
+                "the sweep took a temp that belongs to another output");
+            Assert.Equal(["{\"id\":\"THEIRS-1\"}"], File.ReadAllLines(theirs));
+        }
+        finally
+        {
+            if (pinned) MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
     /// A second export running against the same output right now. Adoption picks the newest
     /// matching temp with only a line count to go on, and the file a live run is writing into
     /// is always the newest one - so recovering a pre-2.1.0 checkpoint copied that run's rows
@@ -300,6 +390,83 @@ public class OrphanTempOwnershipTests
                 File.ReadAllLines(live));
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The probe file the case question is answered with is deleted by hand and by the handle
+    /// it was opened on - and on Unix that handle unlinks where the stream is disposed, so a
+    /// process killed outright leaves one behind, named after nothing any run comes back to.
+    /// The next run that writes here takes it back before writing its own.
+    ///
+    /// A leftover is put there by hand, since the state is only reachable by killing a process
+    /// mid-probe. The cached answer is forgotten first so the export below actually asks.
+    /// </summary>
+    [Fact]
+    public void A_run_reclaims_the_case_probe_file_an_earlier_run_left()
+    {
+        var dir = NewDir();
+        var output = Path.Combine(dir, "users.jsonl");
+        var checkpoint = Path.Combine(dir, "run.checkpoint");
+        var litter = Path.Combine(dir, $".mgx-case-{Guid.NewGuid():N}");
+        try
+        {
+            File.WriteAllText(litter, "");
+            MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+
+            var handler = new ScriptedHandler();
+            using var transport = MgxTransportScope.Inject(handler);
+            handler.Queue(HttpStatusCode.OK, Page1);
+            handler.Queue(HttpStatusCode.OK, Page2);
+
+            Export(output, checkpoint);
+
+            Assert.False(File.Exists(litter),
+                "a leftover case probe outlived a run that wrote in the same directory");
+            Assert.Empty(Directory.GetFiles(dir, ".mgx-case-*"));
+            Assert.Equal(["{\"id\":\"u1\"}", "{\"id\":\"u2\"}", "{\"id\":\"u3\"}"],
+                File.ReadAllLines(output));
+        }
+        finally
+        {
+            MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The question answered from what is already on disk. An entry that is there under one
+    /// spelling is there under the inverted spelling too exactly when the volume folds case, so
+    /// a directory holding any lettered name settles it with nothing written - which is what
+    /// keeps the answer out of the caller's directory's write time on every path, gated or not.
+    ///
+    /// What the volume actually does is taken with the test's own file first, so the assertion
+    /// is against this host rather than against its platform's default: either answer executes
+    /// here and neither is skipped.
+    /// </summary>
+    [Fact]
+    public void A_directory_holding_a_lettered_entry_decides_its_case_rule_without_writing()
+    {
+        var dir = NewDir();
+        try
+        {
+            var insensitive = NamesAreCaseInsensitive(dir);
+            File.WriteAllText(Path.Combine(dir, "Entry.txt"), "");
+            MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+
+            var namesBefore = Directory.GetFileSystemEntries(dir).OrderBy(n => n).ToArray();
+            var writtenBefore = Directory.GetLastWriteTimeUtc(dir);
+
+            Assert.Equal(!insensitive,
+                MgxCmdletBase.DirectoryNamesAreCaseSensitive(dir, mayWrite: true));
+
+            Assert.Equal(namesBefore, Directory.GetFileSystemEntries(dir).OrderBy(n => n).ToArray());
+            Assert.Equal(writtenBefore, Directory.GetLastWriteTimeUtc(dir));
+        }
+        finally
+        {
+            MgxCmdletBase.SetDirectoryCaseSensitivity(dir, null);
+            try { Directory.Delete(dir, true); } catch { }
+        }
     }
 
     /// <summary>

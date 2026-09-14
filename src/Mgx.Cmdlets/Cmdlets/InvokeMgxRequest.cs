@@ -127,6 +127,18 @@ public class InvokeMgxRequest : MgxCmdletBase
     private bool _isFanOut;
 
     /// <summary>
+    /// The checkpoint gate's answer for this invocation, asked once and reused. -CheckpointPath,
+    /// -Confirm and -WhatIf are all bound once for the whole run, but a -Uri without a {id}
+    /// placeholder is not a fan-out: ProcessRecord runs the direct branch below once per piped
+    /// item, and each of those calls reaches ExecuteList's checkpoint gate on its own. Without
+    /// this, three piped values asked ShouldProcess three times over the same file - three
+    /// prompts, and three "What if" lines under -WhatIf, for one run. Set on whichever item
+    /// reaches the gate first; every later item on that route reuses the answer instead of
+    /// asking again, a refusal included.
+    /// </summary>
+    private bool? _mayWriteCheckpoint;
+
+    /// <summary>
     /// Full base URL including API version (e.g., "https://graph.microsoft.com/v1.0").
     /// </summary>
     private string VersionedBaseUrl => $"{s_graphEndpoint}/{ApiVersion}";
@@ -141,6 +153,10 @@ public class InvokeMgxRequest : MgxCmdletBase
 
     protected override void BeginProcessing()
     {
+        // A fresh cmdlet instance answers this fresh each run; reset explicitly rather than
+        // relying on that, so the field's own comment is the one place its lifetime is stated.
+        _mayWriteCheckpoint = null;
+
         // Reject absolute URLs (relative paths only); concatenation onto the versioned
         // base URL would otherwise silently produce /v1.0/https:/... on the wire.
         if (Uri.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
@@ -309,6 +325,33 @@ public class InvokeMgxRequest : MgxCmdletBase
             ? GetUnresolvedProviderPathFromPSPath(CheckpointPath)
             : null;
 
+        // -CheckpointPath is the one file this read path writes, and it is the caller's own
+        // resume position: every page boundary saves the next link over it, completion deletes
+        // it, and a checkpoint describing another enumeration is deleted where it is found.
+        // Reads go out under -WhatIf, by the convention above ExecuteWrite, but a preview that
+        // overwrites or removes the position a later run resumes from has changed the thing it
+        // claimed only to describe. So the file gets a gate of its own and the reads keep the
+        // convention: a refusal skips the saves and the deletes, and the enumeration goes on to
+        // page and emit.
+        //
+        // One decision, taken here rather than at each site. The page-boundary callback runs on
+        // whichever thread the iterator resumes on - a page that yields nothing resumes on the
+        // thread pool - and a cmdlet API call from there throws. -Confirm therefore asks once
+        // per run about one file, which is the question it has to answer anyway - and "once per
+        // run" has to hold across ProcessRecord calls too, not just within this one: a -Uri with
+        // no {id} placeholder is not a fan-out, so several piped values still reach ExecuteList
+        // once each through the direct branch in ProcessRecord, each with its own attempt loop
+        // and its own call here. _mayWriteCheckpoint (reset once in BeginProcessing) is what
+        // makes the second and later calls consult the first item's answer instead of asking
+        // ShouldProcess again - a refusal on the first item refuses the rest.
+        //
+        // Reading the checkpoint is not gated: resuming is what the run being previewed would
+        // do, and a preview that ignored it would page from the start and describe a different
+        // set of requests. The branches that refuse a checkpoint leave resume null and enumerate
+        // from the beginning either way - the delete is all the gate withholds.
+        var mayWriteCheckpoint = cpPath == null
+            || (_mayWriteCheckpoint ??= ShouldProcess(cpPath, "Save resume checkpoint"));
+
         // If checkpoint was saved during a previous retry (URL without $count=true),
         // match the checkpoint's URL to avoid mismatch on resume
         if (countAutoAdded && cpPath != null)
@@ -326,7 +369,8 @@ public class InvokeMgxRequest : MgxCmdletBase
                 var url = BuildCollectionUrl(relativeUri,
                     includeCount: !string.IsNullOrEmpty(CountVariable) || includeAutoCount,
                     noPageSize: suppressTop);
-                var iterator = new PageIterator(GetClient());
+                var client = GetClient();
+                var iterator = new PageIterator(client);
                 // -All says how far to page, -Top says how much to return, and they are not the
                 // same question: -All used to zero the cap, so asking for a bounded slice of a
                 // large collection walked all of it. Worse, -Top also sets the page size, so the
@@ -345,7 +389,7 @@ public class InvokeMgxRequest : MgxCmdletBase
                         if (checkpoint.NextLink == null)
                         {
                             // Completion marker: previous run finished
-                            PaginationCheckpoint.Delete(cpPath);
+                            if (mayWriteCheckpoint) PaginationCheckpoint.Delete(cpPath);
                         }
                         else if (string.Equals(checkpoint.Resource, url, StringComparison.Ordinal))
                         {
@@ -361,12 +405,12 @@ public class InvokeMgxRequest : MgxCmdletBase
                             }
                             else
                             {
-                                PaginationCheckpoint.Delete(cpPath);
+                                if (mayWriteCheckpoint) PaginationCheckpoint.Delete(cpPath);
                             }
                         }
                         else
                         {
-                            PaginationCheckpoint.Delete(cpPath);
+                            if (mayWriteCheckpoint) PaginationCheckpoint.Delete(cpPath);
                         }
                     }
                 }
@@ -385,7 +429,7 @@ public class InvokeMgxRequest : MgxCmdletBase
                     onPageComplete: info =>
                     {
                         // Save page-boundary checkpoint
-                        if (cpPath != null && info.NextPageUrl != null)
+                        if (mayWriteCheckpoint && cpPath != null && info.NextPageUrl != null)
                         {
                             try
                             {
@@ -398,7 +442,14 @@ public class InvokeMgxRequest : MgxCmdletBase
                             }
                             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                             {
-                                WriteWarning($"Checkpoint save failed: {ex.Message}");
+                                // Buffered rather than written here. This callback runs on
+                                // whichever thread the iterator resumed on, and a page that
+                                // yields nothing resumes on the thread pool - so a WriteWarning
+                                // from here throws PSInvalidOperationException, and the disk
+                                // problem it was reporting ends the enumeration instead of
+                                // being reported. The drains below write it from the pipeline
+                                // thread, on the same channel the client's own warnings take.
+                                client.EnqueueWarning($"Checkpoint save failed: {ex.Message}");
                             }
                         }
                     },
@@ -429,7 +480,7 @@ public class InvokeMgxRequest : MgxCmdletBase
                     WriteCountDiscrepancyWarning(relativeUri, reportedODataCount.Value, itemCount, Filter);
 
                 // Delete checkpoint on successful completion
-                if (cpPath != null) PaginationCheckpoint.Delete(cpPath);
+                if (mayWriteCheckpoint && cpPath != null) PaginationCheckpoint.Delete(cpPath);
                 return; // Success, exit the retry loop
             }
             catch (PipelineStoppedException)
@@ -470,6 +521,16 @@ public class InvokeMgxRequest : MgxCmdletBase
             {
                 WriteGraphError(ex, relativeUri, ApiVersion);
                 return;
+            }
+            finally
+            {
+                // Every way out of the attempt above - the success path, a retry via continue,
+                // or any catch - drains here once, from the pipeline thread. The last catch
+                // already drains inside WriteGraphError before it writes its error record, so
+                // that exit reaches this a second time; TryDequeue found the queue already
+                // empty from the first drain, so the second call writes nothing and nothing
+                // doubles.
+                DrainClientMessages();
             }
         }
     }
@@ -513,6 +574,12 @@ public class InvokeMgxRequest : MgxCmdletBase
 
     private void ExecuteWrite(HttpMethod method, string relativeUri, string? sourceId)
     {
+        // The gate sits on the write and on the bulk write below, and on nothing else: reads go
+        // out under -WhatIf, per the PowerShell convention, so that a dry run under
+        // $WhatIfPreference has real data for the gated writes to be previewed against. The help
+        // says so, because "the cmdlet is not run" would not be true of a GET that connects,
+        // pages, spends resource units and emits objects. Invoke-MgxBatchRequest gates its reads
+        // too, for the reason stated above its own gate; the two contracts are documented apart.
         if (!ShouldProcess(relativeUri, method.Method))
             return;
 

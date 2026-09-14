@@ -1,15 +1,21 @@
 #Requires -Modules Pester
 
 <#
-    Mgx Pester Tests (v0.3.0)
+    The behavior of the built module as PowerShell sees it: the cmdlet and parameter contract,
+    and what the cmdlets decide before a request leaves the process.
 
-    Prerequisites:
-    1. Run build.ps1 first
-    2. For Live tests: Connect-MgGraph -Scopes "User.Read.All", "Group.Read.All"
+    Run ./build.ps1 first, then the harness, which is what CI runs too:
 
-    Usage:
-    Invoke-Pester ./tests/Mgx.Tests.ps1 -Output Detailed
-    Invoke-Pester ./tests/Mgx.Tests.ps1 -Output Detailed -Tag 'Live'
+        Import-Module ./tests/TestHarness.psm1; Invoke-TestHarness
+
+    The harness excludes the Live tag, so a clone with no Graph session passes. What a cmdlet
+    does against a real tenant is proven in tests/Live, run on its own:
+
+        Invoke-Pester -Path ./tests/Live
+
+    The one Live-tagged block left here is the sustained auth run at the bottom: it needs an
+    hour of directory traffic to cross a token boundary, which is not something tests/Live can
+    ask of anyone running the suite. Pass -IncludeLive to the harness to reach it.
 #>
 
 BeforeAll {
@@ -186,20 +192,6 @@ Describe 'Expand-MgxRelation Parameter Compatibility' {
         if ($err) {
             $err.Exception.Message | Should -Not -BeLike '*ConsistencyLevel*'
         }
-    }
-
-    # R3-11: Buffer size warning at 50k items
-    It 'Should warn when buffer exceeds 50k items' -Tag 'Slow' {
-        $objects = 1..50001 | ForEach-Object { [PSCustomObject]@{id = "id-$_"} }
-        $w = @()
-        try {
-            $objects | Expand-MgxRelation '/users/{id}/manager' -As Manager `
-                -WarningVariable w 3>$null -ErrorAction Stop
-        } catch {
-            # Expected: auth error from EndProcessing. Warning fires in ProcessRecord before this.
-        }
-        $bufferWarning = $w | Where-Object { $_ -match 'buffer' -or $_ -match '50.000' }
-        $bufferWarning | Should -Not -BeNullOrEmpty
     }
 }
 
@@ -806,6 +798,10 @@ Describe 'Set-MgxOption Pipeline Parameters' {
         { Set-MgxOption -CircuitBreakerMinThroughput 0 } | Should -Throw
     }
 
+    It 'Should reject -CircuitBreakerMinThroughput 1' {
+        { Set-MgxOption -CircuitBreakerMinThroughput 1 } | Should -Throw
+    }
+
     It 'Should reject -RateLimitQueueLimit -1' {
         { Set-MgxOption -RateLimitQueueLimit -1 } | Should -Throw
     }
@@ -1342,177 +1338,6 @@ Describe 'NormalizeSelect (via reflection)' {
     }
 }
 
-Describe 'Live API Tests' -Tag 'Live' {
-    BeforeAll {
-        $script:liveConnected = $null -ne (Get-MgContext -ErrorAction SilentlyContinue)
-    }
-
-    BeforeEach {
-        if (-not $script:liveConnected) {
-            Set-ItResult -Skipped -Because 'Not connected to Microsoft Graph'
-        }
-    }
-
-    It 'Invoke-MgxRequest /users -Top 5 should return users' {
-        $users = Invoke-MgxRequest /users -Top 5
-        $users | Should -Not -BeNullOrEmpty
-        $users.Count | Should -BeLessOrEqual 5
-        $users[0].id | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Invoke-MgxRequest /users -All | Select -First 5 should stream' {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $firstUser = Invoke-MgxRequest /users -All | Select-Object -First 1
-        $sw.Stop()
-
-        $firstUser | Should -Not -BeNullOrEmpty
-        # Streaming means first item arrives fast
-        $sw.ElapsedMilliseconds | Should -BeLessThan 30000
-    }
-
-    It 'Invoke-MgxRequest /users/<id> should return single entity' {
-        $firstUser = Invoke-MgxRequest /users -Top 1
-        $user = Invoke-MgxRequest "/users/$($firstUser.id)"
-        $user | Should -Not -BeNullOrEmpty
-        $user.id | Should -Be $firstUser.id
-    }
-
-    It 'Invoke-MgxRequest /users -Filter should work' {
-        $users = Invoke-MgxRequest /users -Filter "accountEnabled eq true" -Top 3
-        $users | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Fan-out: $ids | Invoke-MgxRequest /users/{id} should return entities with _MgxSourceId' {
-        $topUsers = Invoke-MgxRequest /users -Top 3 -Property id
-        $ids = $topUsers | ForEach-Object { $_.id }
-        $results = $ids | Invoke-MgxRequest '/users/{id}'
-        $results | Should -Not -BeNullOrEmpty
-        $results.Count | Should -Be $ids.Count
-        $results[0]._MgxSourceId | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Collection fan-out: $ids | Invoke-MgxRequest /groups/{id}/members -All should work' {
-        $groups = Invoke-MgxRequest /groups -Top 2 -Property id
-        if ($groups) {
-            $ids = $groups | ForEach-Object { $_.id }
-            $results = $ids | Invoke-MgxRequest '/groups/{id}/members' -Top 5
-            # May be empty if groups have no members, but should not error
-            $results | Should -Not -BeNullOrEmpty -Because 'At least some groups should have members'
-        } else {
-            Set-ItResult -Skipped -Because 'No groups in tenant'
-        }
-    }
-
-    It 'Invoke-MgxRequest with {id} but no pipeline should error' {
-        { Invoke-MgxRequest '/users/{id}' } | Should -Throw '*pipeline*'
-    }
-
-    It '@odata.type should be preserved verbatim' {
-        # Use group members (polymorphic endpoint that reliably returns @odata.type)
-        $groups = Invoke-MgxRequest /groups -Top 5 -Property id
-        $members = @()
-        foreach ($g in $groups) {
-            $members = @(Invoke-MgxRequest "/groups/$($g.id)/members" -Top 3)
-            if ($members.Count -gt 0) { break }
-        }
-        if ($members.Count -eq 0) {
-            Set-ItResult -Skipped -Because 'No group members found to test @odata.type'
-            return
-        }
-        $withType = $members | Where-Object { $_['@odata.type'] }
-        $withType | Should -Not -BeNullOrEmpty
-    }
-
-    It 'DateTime properties should be DateTimeOffset' {
-        $user = Invoke-MgxRequest /users -Top 1
-        if ($user.createdDateTime) {
-            $user.createdDateTime | Should -BeOfType [System.DateTimeOffset]
-        }
-    }
-
-    It 'Output parity: Invoke-MgxRequest vs Get-MgUser' {
-        $mgx = Invoke-MgxRequest /users -Top 3 -Property id, displayName, userPrincipalName
-        $mg  = Get-MgUser -Top 3 -Property Id, DisplayName, UserPrincipalName
-
-        $diff = Compare-Object ($mg.Id | Sort-Object) ($mgx.id | Sort-Object)
-        $diff | Should -BeNullOrEmpty
-    }
-
-    It 'Invoke-MgxRequest -ApiVersion beta should use beta endpoint' {
-        $users = Invoke-MgxRequest /users -ApiVersion beta -Top 3
-        $users | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Set-MgxOption round-trip: NoRateLimit then re-enable with RateLimitBurst' {
-        Set-MgxOption -NoRateLimit
-        Set-MgxOption -RateLimitBurst 100
-        # Should implicitly clear NoRateLimit; verify by running a request
-        $user = Invoke-MgxRequest /users -Top 1
-        $user | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Export-MgxCollection should export JSONL file' {
-        $outFile = Join-Path ([System.IO.Path]::GetTempPath()) "mgx-test-export-$(Get-Random).jsonl"
-        try {
-            $result = Export-MgxCollection /users -OutputFile $outFile -Top 10
-            $result | Should -Not -BeNullOrEmpty
-            $result.ItemCount | Should -BeGreaterThan 0
-            $result.ItemCount | Should -BeLessOrEqual 10
-            $result.OutputFile | Should -Be $outFile
-            Test-Path $outFile | Should -BeTrue
-            $lines = Get-Content $outFile
-            $lines.Count | Should -Be $result.ItemCount
-            # Each line should be valid JSON
-            $lines | ForEach-Object { $_ | ConvertFrom-Json } | Should -Not -BeNullOrEmpty
-        } finally {
-            if (Test-Path $outFile) { Remove-Item $outFile -Force }
-        }
-    }
-
-    It 'Export-MgxCollection checkpoint should be deleted on completion' {
-        $outFile = Join-Path ([System.IO.Path]::GetTempPath()) "mgx-test-cp-export-$(Get-Random).jsonl"
-        $cpFile = Join-Path ([System.IO.Path]::GetTempPath()) "mgx-test-cp-$(Get-Random).json"
-        try {
-            Export-MgxCollection /users -OutputFile $outFile -Top 5 -CheckpointPath $cpFile
-            Test-Path $cpFile | Should -BeFalse -Because 'Checkpoint should be deleted on successful completion'
-        } finally {
-            if (Test-Path $outFile) { Remove-Item $outFile -Force }
-            if (Test-Path $cpFile) { Remove-Item $cpFile -Force }
-        }
-    }
-
-    It 'Enable-MgxResilience should inject resilience and SDK should still work' {
-        Enable-MgxResilience
-        $state = Get-MgxResilience
-        $state.IsEnabled | Should -BeTrue
-        $state.IsActive | Should -BeTrue
-
-        # SDK cmdlet should work with resilience injected
-        $user = Get-MgUser -Top 1
-        $user | Should -Not -BeNullOrEmpty
-
-        Disable-MgxResilience
-        $state2 = Get-MgxResilience
-        $state2.IsEnabled | Should -BeFalse
-        $state2.IsActive | Should -BeFalse
-
-        # SDK should still work after disable
-        $user2 = Get-MgUser -Top 1
-        $user2 | Should -Not -BeNullOrEmpty
-    }
-}
-
-Describe 'Expand-MgxRelation Buffer Warning' {
-    It 'Source code contains 50k buffer warning guard' {
-        # The actual live test (piping 50k items) requires Graph connection and takes ~15 min
-        # due to fan-out HTTP calls. Verify the guard exists in source instead.
-        $source = Get-Content (Join-Path $PSScriptRoot '../../src/Mgx.Cmdlets/Cmdlets/Expand/ExpandMgxRelation.cs') -Raw
-        $source | Should -Match '50_000'
-        $source | Should -Match 'WriteWarning'
-        $source | Should -Match 'buffer|Buffer'
-    }
-}
-
 Describe 'HttpClient Reset Leaves A Held Client Alone' {
     # A replaced transport is dropped, not closed. Every ResilientGraphClient built on it
     # captured it in its constructor and keeps sending through it for as long as its
@@ -1654,195 +1479,6 @@ finally {
         $restoredLine | Should -Not -BeNullOrEmpty
         $restoredLine | Should -Not -Be 'RESTORED []' -Because 'the original SDK client carries a BaseAddress'
         $wrappedLine | Should -Be ('WRAPPED ' + ($restoredLine -replace '^RESTORED '))
-    }
-}
-
-Describe 'Sync-MgxDelta ExecuteDeltaSync Tests' -Tag 'Live' {
-    BeforeAll {
-        $script:liveConnected = $null -ne (Get-MgContext -ErrorAction SilentlyContinue)
-        $script:deltaTestDir = Join-Path ([System.IO.Path]::GetTempPath()) "mgx-delta-live-$(New-Guid)"
-        New-Item -ItemType Directory -Path $script:deltaTestDir -Force | Out-Null
-    }
-
-    BeforeEach {
-        if (-not $script:liveConnected) {
-            Set-ItResult -Skipped -Because 'Not connected to Microsoft Graph'
-        }
-    }
-
-    AfterAll {
-        if (Test-Path $script:deltaTestDir) { Remove-Item $script:deltaTestDir -Recurse -Force }
-    }
-
-    # --- #1: 410 Gone retry flow ---
-    It '410 Gone: deletes state and performs full re-sync' {
-        $dp = Join-Path $script:deltaTestDir '410-test.json'
-        # Create a delta state with a fabricated expired token
-        # Graph will return 410 Gone for this invalid token
-        @{
-            deltaLink = "https://graph.microsoft.com/v1.0/users/delta?`$deltatoken=EXPIRED_FAKE_TOKEN_$(New-Guid)"
-            select = ''
-            filter = $null
-            resource = '/users/delta'
-            lastSync = (Get-Date).AddDays(-30).ToString('o')
-            itemCount = 10
-            graphEndpoint = 'https://graph.microsoft.com'
-        } | ConvertTo-Json | Set-Content $dp
-
-        # The cmdlet should catch the 410, delete state, and re-sync
-        $results = Sync-MgxDelta /users/delta -DeltaPath $dp -Property id -Verbose -WarningVariable warnings *>&1
-        $warningTexts = $warnings | ForEach-Object { "$_" }
-        $items = $results | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] }
-
-        # Should have items (full re-sync happened)
-        $items.Count | Should -BeGreaterThan 0
-        # Delta state should exist (new token saved after re-sync)
-        Test-Path $dp | Should -BeTrue
-        # Should have warned about 410
-        $warningTexts | Where-Object { $_ -like '*410*' -or $_ -like '*expired*' -or $_ -like '*re-sync*' } | Should -Not -BeNullOrEmpty
-    }
-
-    # --- #2: 410 on second attempt falls through ---
-    # Cannot reliably trigger two consecutive 410s against live Graph.
-    # The first 410 causes a full re-sync which gets a fresh token.
-    # The only way to get a second 410 is if Graph is broken, which we can't simulate.
-    # Tested indirectly: test #1 proves the retry loop works once, and the for-loop
-    # has attempt < 2 with when(attempt == 0) guard, so attempt 1 cannot catch 410.
-
-    # --- #3: OutputFile JSONL mode ---
-    It 'OutputFile: writes items as one-JSON-per-line' {
-        $dp = Join-Path $script:deltaTestDir 'jsonl-test.json'
-        $outFile = Join-Path $script:deltaTestDir 'output.jsonl'
-
-        Sync-MgxDelta /users/delta -DeltaPath $dp -Property id,displayName -OutputFile $outFile
-
-        Test-Path $outFile | Should -BeTrue
-        $lines = Get-Content $outFile
-        $lines.Count | Should -BeGreaterThan 0
-        # Each line should be valid JSON
-        foreach ($line in $lines) {
-            { $line | ConvertFrom-Json } | Should -Not -Throw
-        }
-        # First item should have an id property
-        ($lines[0] | ConvertFrom-Json).id | Should -Not -BeNullOrEmpty
-    }
-
-    # --- #4: OutputFile temp file cleanup on error ---
-    It 'OutputFile: no orphan temp files after successful sync' {
-        $dp = Join-Path $script:deltaTestDir 'tempclean-test.json'
-        $outFile = Join-Path $script:deltaTestDir 'tempclean-output.jsonl'
-
-        Sync-MgxDelta /users/delta -DeltaPath $dp -Property id -OutputFile $outFile
-
-        # No .tmp files should remain
-        $tmpFiles = Get-ChildItem $script:deltaTestDir -Filter '*.tmp'
-        $tmpFiles | Should -BeNullOrEmpty
-    }
-
-    # --- #5: OutputFile atomic rename on success ---
-    It 'OutputFile: final file exists, no temp file remains' {
-        $dp = Join-Path $script:deltaTestDir 'atomic-test.json'
-        $outFile = Join-Path $script:deltaTestDir 'atomic-output.jsonl'
-
-        Sync-MgxDelta /users/delta -DeltaPath $dp -Property id -OutputFile $outFile
-
-        Test-Path $outFile | Should -BeTrue
-        # Verify it's a complete file (not truncated) by parsing last line
-        $lines = Get-Content $outFile
-        { $lines[-1] | ConvertFrom-Json } | Should -Not -Throw
-    }
-
-    # --- #6: Cancellation does NOT save delta state ---
-    It 'Cancellation: delta state unchanged when sync is cancelled' {
-        $dp = Join-Path $script:deltaTestDir 'cancel-state.json'
-
-        # First: do a successful sync to create a valid delta state
-        Sync-MgxDelta /users/delta -DeltaPath $dp -Property id
-
-        $stateBefore = Get-Content $dp -Raw
-        $lastSyncBefore = ($stateBefore | ConvertFrom-Json).lastSync
-
-        # Now start a sync with a very short timeout to force cancellation
-        $job = Start-Job -ScriptBlock {
-            param($modulePath, $dp)
-            Import-Module $modulePath -Force
-            # This will be killed before completion
-            Sync-MgxDelta /users/delta -DeltaPath $dp -Property id
-        } -ArgumentList $ModulePath, $dp
-
-        Start-Sleep -Milliseconds 500
-        Stop-Job $job -ErrorAction SilentlyContinue
-        Remove-Job $job -Force -ErrorAction SilentlyContinue
-
-        # Delta state should still have the ORIGINAL lastSync (not updated by cancelled run)
-        # Note: the job runs in a separate process so it can't write to the same delta file
-        # unless it reaches the save point. A 500ms window should be too short for full pagination.
-        $stateAfter = Get-Content $dp | ConvertFrom-Json
-        $stateAfter.lastSync | Should -Be $lastSyncBefore
-    }
-
-    # --- #7: Cancellation cleans up temp file ---
-    # Tested indirectly by #4 and #6. A cancelled sync in a subprocess
-    # may leave temp files if killed hard, but the cmdlet's catch block
-    # does cleanup. Cannot reliably test kill-during-write from Pester.
-
-    # --- #8: Delta state NOT saved on error ---
-    It 'Error: delta state not saved when Graph returns error' {
-        $dp = Join-Path $script:deltaTestDir 'error-nosave.json'
-        if (Test-Path $dp) { Remove-Item $dp }
-
-        # Use a nonexistent endpoint that will return 404
-        $Error.Clear()
-        Sync-MgxDelta /nonexistent/delta -DeltaPath $dp -ErrorAction SilentlyContinue
-
-        # Delta state should NOT exist (error before save)
-        Test-Path $dp | Should -BeFalse
-    }
-
-    # --- #9: GraphServiceException (non-410) writes error record ---
-    It 'Error: 404 from Graph produces ErrorRecord' {
-        $dp = Join-Path $script:deltaTestDir 'errorrecord-test.json'
-        $Error.Clear()
-
-        Sync-MgxDelta /nonexistent/delta -DeltaPath $dp -ErrorAction SilentlyContinue
-
-        $Error.Count | Should -BeGreaterThan 0
-        # Graph may return 400 or 404 for nonexistent endpoints
-        $Error[0].FullyQualifiedErrorId | Should -Not -BeNullOrEmpty
-    }
-
-    # --- #10: BrokenCircuitException writes error record ---
-    # Cannot reliably trigger circuit breaker from Pester against live Graph
-    # without sending hundreds of requests that all fail. This would abuse
-    # the test tenant's quota. The circuit breaker behavior is tested in
-    # xUnit (CircuitBreakerTests.cs, 15 tests).
-
-    # --- #11: HttpRequestException writes error record ---
-    # Cannot trigger network errors against a live tenant from Pester.
-    # Tested in xUnit (Delta_NetworkError_ThrowsHttpRequestException).
-
-    # --- #12: IOException writes error record ---
-    It 'Error: unwritable OutputFile produces terminating error' {
-        $dp = Join-Path $script:deltaTestDir 'ioerror-test.json'
-        $outFile = '/System/locked-output.jsonl'
-        if (-not $IsMacOS) { $outFile = '/proc/locked-output.jsonl' }
-
-        # ValidateWriteAccess throws a terminating error in BeginProcessing
-        { Sync-MgxDelta /users/delta -DeltaPath $dp -Property id -OutputFile $outFile -ErrorAction Stop } |
-            Should -Throw '*Cannot write*'
-    }
-
-    # --- #13: No delta token received warning ---
-    It 'Warning: non-delta endpoint produces no-deltaLink warning' {
-        $dp = Join-Path $script:deltaTestDir 'nodelta-warn.json'
-        $warnings = $null
-
-        Sync-MgxDelta /users -DeltaPath $dp -Property id -WarningVariable warnings -ErrorAction SilentlyContinue 3>$null
-
-        $warningTexts = $warnings | ForEach-Object { "$_" }
-        # Should warn about no delta token received (endpoint doesn't return deltaLink)
-        # OR warn about URI not containing /delta (from BeginProcessing)
-        $warningTexts | Should -Not -BeNullOrEmpty
     }
 }
 

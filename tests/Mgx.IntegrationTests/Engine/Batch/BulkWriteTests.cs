@@ -522,31 +522,13 @@ public class ExceptionThrowingHandler : HttpMessageHandler
 /// <summary>
 /// Sends the headers of the given status and one byte of body, then nothing, honoring only
 /// the read's own token - the shape of a response whose body stalls. The status defaults to
-/// a 500; a write is answered 201 and stalls exactly the same way.
+/// a 500; a write is answered 201 and stalls exactly the same way. The body is the shared
+/// <see cref="StallingContent"/>, whose content read stream stalls too, so a reader that takes
+/// the body as a stream reaches its read timeout rather than waiting on a buffer forever.
 /// </summary>
 public class StallingErrorHandler(HttpStatusCode status = HttpStatusCode.InternalServerError)
     : HttpMessageHandler
 {
-    private sealed class StallingContent : HttpContent
-    {
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-            => await SerializeToStreamAsync(stream, context, CancellationToken.None);
-
-        protected override async Task SerializeToStreamAsync(
-            Stream stream, TransportContext? context, CancellationToken cancellationToken)
-        {
-            stream.WriteByte((byte)'{');
-            await stream.FlushAsync(cancellationToken);
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-        }
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 4096;
-            return true;
-        }
-    }
-
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {

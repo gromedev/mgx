@@ -11,6 +11,7 @@ namespace Mgx.IntegrationTests.Fakes;
 public sealed class StubHttpMessageHandler : HttpMessageHandler
 {
     private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
+    private readonly MockRuleSet _rules = new();
     private Func<HttpRequestMessage, HttpResponseMessage>? _last;
     private readonly Lock _sync = new();
 
@@ -20,6 +21,41 @@ public sealed class StubHttpMessageHandler : HttpMessageHandler
     public int RequestCount
     {
         get { lock (_sync) return Requests.Count; }
+    }
+
+    /// <summary>
+    /// Program a response for the requests a predicate picks out, rather than for a position in
+    /// the script, with the same precedence <see cref="MockHttpHandler"/> uses: a keyed entry
+    /// that matches this request wins and consumes no scripted response; an unmatched request
+    /// takes the script, whose last entry repeats as it always has.
+    /// <para>
+    /// Among the keyed entries the first one that matches, in programming order, answers - so a
+    /// narrower entry has to be programmed before a broader one, and a fault registered after a
+    /// generator that also matches its request never answers at all. An entry that never
+    /// answered is named in <see cref="UnansweredRules"/>, and a test that aims a fault should
+    /// assert that list is empty: nothing else about the run says the fault was not injected.
+    /// </para>
+    /// <paramref name="name"/> is what those assertions call this entry, and defaults to its
+    /// position in programming order.
+    /// </summary>
+    public MockResponseRule<StubHttpMessageHandler> When(
+        Func<MockRequest, bool> predicate, string? name = null)
+        => _rules.When(this, predicate, name);
+
+    /// <summary>Every keyed entry, with the requests it matched and the ones it answered.</summary>
+    public IReadOnlyList<MockRuleReport> ProgrammedRules
+    {
+        get { lock (_sync) return _rules.ProgrammedRules; }
+    }
+
+    /// <summary>
+    /// The keyed entries that never answered a request, by name. A fault an earlier entry
+    /// shadowed leaves no other trace: the operation completes exactly as it would have with
+    /// nothing programmed.
+    /// </summary>
+    public IReadOnlyList<string> UnansweredRules
+    {
+        get { lock (_sync) return _rules.UnansweredRules; }
     }
 
     public StubHttpMessageHandler Enqueue(Func<HttpRequestMessage, HttpResponseMessage> factory)
@@ -56,26 +92,48 @@ public sealed class StubHttpMessageHandler : HttpMessageHandler
         return this;
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        Func<HttpRequestMessage, HttpResponseMessage> factory;
+        // Only read when something is programmed to look: a predicate over a $batch envelope
+        // needs the bytes, and a handler with no keyed entries touches the request exactly as
+        // it did before there were any.
+        byte[]? bodyBytes = null;
+        if (!_rules.IsEmpty && request.Content != null)
+            bodyBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+        var keyed = new MockRequest(request, bodyBytes);
+
+        MockReply? reply;
+        Func<HttpRequestMessage, HttpResponseMessage>? factory = null;
         lock (_sync)
         {
             // Record method/uri rather than the message: HttpClient disposes the
             // request once the call completes, so the object is not safe to keep.
             Requests.Add((request.Method, request.RequestUri?.ToString() ?? string.Empty));
 
-            if (_responses.Count > 0)
-                _last = _responses.Dequeue();
+            reply = _rules.Resolve(keyed);
+            if (reply == null)
+            {
+                if (_responses.Count > 0)
+                    _last = _responses.Dequeue();
 
-            factory = _last ?? throw new InvalidOperationException(
-                "StubHttpMessageHandler received a request but no response was scripted.");
+                factory = _last ?? throw new InvalidOperationException(
+                    "StubHttpMessageHandler received a request but no response was scripted.");
+            }
         }
 
-        var response = factory(request);
-        return Task.FromResult(response);
+        if (reply == null)
+            return factory!(request);
+
+        // On the send's own token, so an answer held past the attempt timeout ends as a timeout.
+        if (reply.Delay > TimeSpan.Zero)
+            await Task.Delay(reply.Delay, cancellationToken);
+
+        if (reply.Exception != null)
+            throw reply.Exception;
+
+        return reply.CreateResponse(keyed);
     }
 }

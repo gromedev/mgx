@@ -32,12 +32,13 @@ public sealed record CapturedRequest(
 /// </summary>
 public class MockHttpHandler : HttpMessageHandler
 {
-    private readonly Queue<MockResponse> _responses = new();
+    private readonly Queue<MockReply> _responses = new();
+    private readonly MockRuleSet _rules = new();
     private readonly List<HttpRequestMessage> _requests = [];
     private readonly List<CapturedRequest> _captured = [];
     private readonly List<HttpStatusCode> _served = [];
     private readonly object _lock = new();
-    private MockResponse? _defaultResponse;
+    private MockReply? _defaultResponse;
 
     public int RequestCount
     {
@@ -60,16 +61,53 @@ public class MockHttpHandler : HttpMessageHandler
 
     /// <summary>
     /// The status codes handed back, in order. A test whose assertion is that nothing was
-    /// reported needs some way to know the wire reported something to begin with.
+    /// reported needs some way to know the wire reported something to begin with. An answer
+    /// that never reached the caller is not here: one thrown instead of answered, and one held
+    /// past the attempt timeout that canceled the send.
     /// </summary>
     public List<HttpStatusCode> ServedStatusCodes
     {
         get { lock (_lock) { return [.. _served]; } }
     }
 
+    /// <summary>
+    /// Program a response for the requests a predicate picks out, rather than for a position in
+    /// the queue. A fault can then be aimed at page 3, at one fan-out item, or at the second
+    /// attempt of a request, and it lands there however the requests interleave.
+    /// Precedence: a keyed entry that matches this request wins and consumes no queue entry; an
+    /// unmatched request takes the queue; an empty queue takes the default response.
+    /// <para>
+    /// Among the keyed entries the first one that matches, in programming order, answers - so a
+    /// narrower entry has to be programmed before a broader one, and a fault registered after a
+    /// generator that also matches its request never answers at all. An entry that never
+    /// answered is named in <see cref="UnansweredRules"/>, and a test that aims a fault should
+    /// assert that list is empty: nothing else about the run says the fault was not injected.
+    /// </para>
+    /// <paramref name="name"/> is what those assertions call this entry, and defaults to its
+    /// position in programming order.
+    /// </summary>
+    public MockResponseRule<MockHttpHandler> When(Func<MockRequest, bool> predicate, string? name = null)
+        => _rules.When(this, predicate, name);
+
+    /// <summary>Every keyed entry, with the requests it matched and the ones it answered.</summary>
+    public IReadOnlyList<MockRuleReport> ProgrammedRules
+    {
+        get { lock (_lock) { return _rules.ProgrammedRules; } }
+    }
+
+    /// <summary>
+    /// The keyed entries that never answered a request, by name. A fault an earlier entry
+    /// shadowed leaves no other trace: the operation completes exactly as it would have with
+    /// nothing programmed.
+    /// </summary>
+    public IReadOnlyList<string> UnansweredRules
+    {
+        get { lock (_lock) { return _rules.UnansweredRules; } }
+    }
+
     public void QueueResponse(HttpStatusCode statusCode, string? body = null, Dictionary<string, string>? headers = null, string contentType = "application/json")
     {
-        _responses.Enqueue(new MockResponse(statusCode, body, headers, null, contentType, null));
+        _responses.Enqueue(new MockReply { StatusCode = statusCode, Body = body, Headers = headers, ContentType = contentType });
     }
 
     /// <summary>
@@ -77,7 +115,7 @@ public class MockHttpHandler : HttpMessageHandler
     /// </summary>
     public void QueueBytes(HttpStatusCode statusCode, byte[] body, string contentType, Dictionary<string, string>? headers = null)
     {
-        _responses.Enqueue(new MockResponse(statusCode, null, headers, null, contentType, body));
+        _responses.Enqueue(new MockReply { StatusCode = statusCode, BodyBytes = body, Headers = headers, ContentType = contentType });
     }
 
     /// <summary>
@@ -85,12 +123,12 @@ public class MockHttpHandler : HttpMessageHandler
     /// </summary>
     public void QueueEmpty(HttpStatusCode statusCode, Dictionary<string, string>? headers = null)
     {
-        _responses.Enqueue(new MockResponse(statusCode, null, headers, null, null, null));
+        _responses.Enqueue(new MockReply { StatusCode = statusCode, Headers = headers });
     }
 
     public void SetDefaultResponse(HttpStatusCode statusCode, string? body = null, Dictionary<string, string>? headers = null)
     {
-        _defaultResponse = new MockResponse(statusCode, body, headers, null, "application/json", null);
+        _defaultResponse = new MockReply { StatusCode = statusCode, Body = body, Headers = headers, ContentType = "application/json" };
     }
 
     /// <summary>
@@ -109,7 +147,7 @@ public class MockHttpHandler : HttpMessageHandler
     /// </summary>
     public void QueueException(Exception exception)
     {
-        _responses.Enqueue(new MockResponse(HttpStatusCode.OK, null, null, exception, null, null));
+        _responses.Enqueue(new MockReply { Exception = exception });
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -126,42 +164,36 @@ public class MockHttpHandler : HttpMessageHandler
                 ?? new Dictionary<string, string[]>(),
             bodyBytes);
 
-        MockResponse mock;
+        var keyed = new MockRequest(request, bodyBytes);
+
+        MockReply mock;
         lock (_lock)
         {
             _requests.Add(request);
             _captured.Add(captured);
-            mock = _responses.Count > 0 ? _responses.Dequeue() : (_defaultResponse ?? new MockResponse(HttpStatusCode.OK, null, null, null, null, null));
-            if (mock.Exception == null) _served.Add(mock.StatusCode);
+            // Keyed first, then the queue, then the default. A keyed answer leaves the queue
+            // where it stands, so a test can aim one fault and script the rest in order.
+            mock = _rules.Resolve(keyed)
+                ?? (_responses.Count > 0 ? _responses.Dequeue() : _defaultResponse ?? new MockReply());
         }
+
+        // On the send's own token: an answer held past the attempt timeout has to end as a
+        // timeout, not as a mock that never returns.
+        if (mock.Delay > TimeSpan.Zero)
+            await Task.Delay(mock.Delay, cancellationToken);
 
         if (mock.Exception != null)
             throw mock.Exception;
 
-        // Real transports (SocketsHttpHandler) set RequestMessage on the response; consumers
-        // like the pacer's OnRetry hook read the request URI off it. Mirror that here.
-        var response = new HttpResponseMessage(mock.StatusCode) { RequestMessage = request };
-        if (mock.BodyBytes != null)
-        {
-            response.Content = new ByteArrayContent(mock.BodyBytes);
-            if (mock.ContentType != null)
-                response.Content.Headers.TryAddWithoutValidation("Content-Type", mock.ContentType);
-        }
-        else if (mock.Body != null)
-        {
-            response.Content = new StringContent(mock.Body, Encoding.UTF8, mock.ContentType ?? "application/json");
-        }
-
-        if (mock.Headers != null)
-        {
-            foreach (var (key, value) in mock.Headers)
-                response.Headers.TryAddWithoutValidation(key, value);
-        }
+        var response = mock.CreateResponse(keyed);
+        // Recorded here rather than where the answer was chosen, so the list says what the
+        // handler handed back: an answer held past an attempt timeout is never handed back at
+        // all, a thrown one never has a status, and two held answers come back in an order the
+        // one they resolved in does not predict.
+        lock (_lock) _served.Add(response.StatusCode);
 
         return response;
     }
-
-    private record MockResponse(HttpStatusCode StatusCode, string? Body, Dictionary<string, string>? Headers, Exception? Exception, string? ContentType, byte[]? BodyBytes);
 }
 
 public static class TestData

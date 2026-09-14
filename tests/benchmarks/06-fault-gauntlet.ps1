@@ -8,6 +8,10 @@
 #   4. mgx        - ids | Invoke-MgxRequest '/users/{id}' (fan-out, full resilience stack)
 # The server's /reset is called between contenders so each faces the identical schedule.
 # Fault profile: 15% of ids throttle once (429, Retry-After 1s); 3% fail twice with 503.
+#
+# The server also takes a programmable fault plan over POST /plan. 06 posts none, so what
+# it measures is the default schedule above and nothing else; a scenario wanting a plan
+# gets its own script rather than growing this one.
 param(
     [int] $N = 1000,
     [int] $Port = 8787
@@ -23,34 +27,14 @@ Import-Module Microsoft.Graph.Users
 # claiming no pipeline input. Real Graph ids are strings, so this matches actual usage.
 $ids = @(1..$N | ForEach-Object { "$_" })
 
-# Find a free port (a crashed prior run can leave a zombie listener behind)
-$Port = ($Port..($Port + 20)) | Where-Object {
-    -not (Test-Connection -TargetName localhost -TcpPort $_ -TimeoutSeconds 1 -Quiet)
-} | Select-Object -First 1
-if (-not $Port) { throw 'no free port found in range' }
-$base = "http://localhost:$Port"
-
-# --- Start mock server as a child process ---
-$server = Start-Process pwsh -PassThru `
-    -ArgumentList '-NoProfile', '-File', (Join-Path $PSScriptRoot 'mock-graph-server.ps1'), '-Port', $Port
+# --- Start mock server as a child process, on a port nothing else is holding ---
+$server = Start-BenchMockServer -Port $Port
+$base = $server.BaseUrl
 try {
-    $up = $false
-    foreach ($i in 1..50) {
-        try { $null = Invoke-RestMethod "$base/ping" -TimeoutSec 1; $up = $true; break } catch { Start-Sleep -Milliseconds 200 }
-    }
-    if (-not $up) { throw "mock server did not come up on port $Port" }
-    Write-Host "mock server up (pid $($server.Id))"
-
     # --- Point the whole Graph stack at the mock ---
-    if (-not (Get-MgEnvironment -Name MgxBench -ErrorAction SilentlyContinue)) {
-        Add-MgEnvironment -Name MgxBench -GraphEndpoint $base -AzureADEndpoint 'https://login.microsoftonline.com' | Out-Null
-    }
-    Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-    Connect-MgGraph -Environment MgxBench `
-        -AccessToken (ConvertTo-SecureString 'mock-token-not-validated' -AsPlainText -Force) -NoWelcome
-    # -AccessToken auth leaves AuthContext.TenantId empty, and Mgx's auth fingerprint
-    # treats an empty TenantId as "not connected" (1.0.4 identity fix). Give it a value.
-    [Microsoft.Graph.PowerShell.Authentication.GraphSession]::Instance.AuthContext.TenantId = 'gauntlet-mock-tenant'
+    # This run's port, every run: the environment is written into the user profile, so one
+    # left standing from a previous run names a port nothing is listening on now.
+    Connect-BenchMockGraph -GraphEndpoint $base
 
     function Reset-Server { $null = Invoke-RestMethod "$base/reset" }
     function Get-ServerStats { Invoke-RestMethod "$base/stats" }
@@ -121,5 +105,6 @@ try {
 }
 finally {
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-    if ($server -and -not $server.HasExited) { $server.Kill() }
+    Remove-BenchGraphEnvironment
+    Stop-BenchMockServer $server
 }

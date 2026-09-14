@@ -17,6 +17,17 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management.Automation" Version="7.4.7" PrivateAssets="all" />
+    <!-- Carried, not compiled against. Nothing here or in the engine uses System.IO.Pipelines;
+         it is in the closure of the System.Text.Json the HOST supplies. The engine's reference
+         is to System.Text.Json 8.0, which needs no pipelines, but a host binds that reference to
+         whatever version it has: PowerShell 7.5 to 9.0 and 7.6 to 10.0, and both of those take
+         PipeReader and PipeWriter across their surface. net8.0 - what src/ targets - does not
+         carry System.IO.Pipelines in Microsoft.NETCore.App, so where the host does not supply it
+         either the first call that touches the JSON stack throws FileNotFoundException: the
+         resolver has only Dependencies/ to offer and nothing put it there. This reference is what
+         puts it there, and one 10.0.x file answers both requests - a Resolving handler's answer
+         is taken as given. ModuleAssemblyClosureTests pins the whole class of gap. -->
+    <PackageReference Include="System.IO.Pipelines" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,7 +47,7 @@
        ./build.ps1 -Configuration Debug, which copies explicitly and does not rely on this. -->
   <Target Name="StageModuleOutput" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <PropertyGroup>
-      <ModuleRoot>$(MSBuildThisFileDirectory)../../module</ModuleRoot>
+      <ModuleRoot Condition="'$(ModuleRoot)' == ''">$(MSBuildThisFileDirectory)../../module</ModuleRoot>
       <DepsDir>$(ModuleRoot)/Dependencies</DepsDir>
     </PropertyGroup>
 
@@ -49,9 +60,10 @@
     <Copy SourceFiles="$(TargetDir)Mgx.Engine.pdb" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Mgx.Engine.pdb')" />
     <Copy SourceFiles="$(TargetDir)Mgx.Cmdlets.deps.json" DestinationFolder="$(ModuleRoot)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Mgx.Cmdlets.deps.json')" />
 
-    <!-- ALC-isolated dependencies -->
+    <!-- ALC-isolated dependencies, and the one assembly carried for a host that may lack it -->
     <Copy SourceFiles="$(TargetDir)Polly.Core.dll" DestinationFolder="$(DepsDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)Polly.Core.dll')" />
     <Copy SourceFiles="$(TargetDir)System.Threading.RateLimiting.dll" DestinationFolder="$(DepsDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)System.Threading.RateLimiting.dll')" />
+    <Copy SourceFiles="$(TargetDir)System.IO.Pipelines.dll" DestinationFolder="$(DepsDir)" SkipUnchangedFiles="true" Condition="Exists('$(TargetDir)System.IO.Pipelines.dll')" />
   </Target>
 
 </Project>

@@ -17,7 +17,7 @@ Disable-MgxResilience [-ProgressAction <ActionPreference>] [-WhatIf] [-Confirm] 
 ```
 
 ## DESCRIPTION
-Disable-MgxResilience removes the Polly resilience injection from the Microsoft.Graph SDK's HTTP transport, restoring the original SDK HttpClient that was saved by Enable-MgxResilience.
+Disable-MgxResilience removes the Polly resilience injection from the Microsoft.Graph SDK's HTTP transport, restoring the original SDK HttpClient that was saved by Enable-MgxResilience. A client the SDK replaced after the injection went on - a Connect-MgGraph to another tenant builds one - is not this module's to restore and is left as it was found, with a warning saying so; the injection's own state comes off either way.
 
 After calling this cmdlet, SDK cmdlets revert to their default retry behavior.
 

@@ -24,6 +24,13 @@ public class ExportCheckpointIntegrityTests
     """;
     private const string ServerError = """{"error":{"code":"InternalServerError","message":"boom"}}""";
 
+    private const string EmptyPage = """
+    {"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?$skiptoken=P3"}
+    """;
+    private const string LastPage = """
+    {"value":[{"id":"u4"},{"id":"u5"}]}
+    """;
+
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         private readonly Queue<(HttpStatusCode Status, string Body)> _steps = new();
@@ -49,6 +56,36 @@ public class ExportCheckpointIntegrityTests
                 RequestMessage = request,
                 Content = new StringContent(step.Body, Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    /// <summary>
+    /// Three pages with the middle one empty behind a nextLink, which is how a page boundary is
+    /// reached with no item written since the fetch. Every answer takes a real asynchronous hop:
+    /// a socket read always yields and Task.FromResult never does, and the thread the iterator
+    /// resumes on is what these pages are here to settle.
+    /// </summary>
+    private sealed class EmptyMiddlePageHandler : HttpMessageHandler
+    {
+        private readonly object _lock = new();
+        public List<string> Urls { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.ToString();
+            lock (_lock) { Urls.Add(url); }
+
+            await Task.Yield();
+
+            var body = url.Contains("skiptoken=P3", StringComparison.Ordinal) ? LastPage
+                : url.Contains("skiptoken=P2", StringComparison.Ordinal) ? EmptyPage
+                : Page1;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
         }
     }
 
@@ -78,6 +115,32 @@ public class ExportCheckpointIntegrityTests
         }
         catch (CmdletInvocationException) { }
         return null;
+    }
+
+    /// <summary>
+    /// An export whose warnings and error records the caller reads, rather than only the item
+    /// count Export hands back. Nothing is swallowed here: a run that dies off the pipeline
+    /// thread has to fail the test that says it does not.
+    /// </summary>
+    private static (List<string> Warnings, int Errors) ExportReporting(
+        string outputPath, string checkpointPath)
+    {
+        using var ps = PowerShell.Create();
+        ps.AddCommand("Import-Module")
+          .AddParameter("Assembly", typeof(Mgx.Cmdlets.Cmdlets.Export.ExportMgxCollection).Assembly);
+        ps.Invoke();
+        ps.Commands.Clear();
+        ps.AddScript("function Get-MgContext { [PSCustomObject]@{ TenantId = 'test-tenant-00000000-0000-0000-0000-000000000000' } }");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        ps.AddCommand("Export-MgxCollection")
+          .AddParameter("Uri", "/users")
+          .AddParameter("OutputFile", outputPath)
+          .AddParameter("CheckpointPath", checkpointPath)
+          .AddParameter("All");
+        ps.Invoke();
+        return ([.. ps.Streams.Warning.Select(w => w.Message)], ps.Streams.Error.Count);
     }
 
     private static string[] Lines(string path) => File.Exists(path) ? File.ReadAllLines(path) : [];
@@ -747,6 +810,52 @@ public class ExportCheckpointIntegrityTests
                 Assert.Equal(["{\"id\":\"u1\"}", "{\"id\":\"u2\"}", "{\"id\":\"u3\"}"], Lines(output));
                 Assert.Equal(3, reported);
             }
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A checkpoint the export cannot write, over pages whose middle one is empty behind a
+    /// nextLink. The page-boundary callback runs on whichever thread the iterator resumed on,
+    /// and a page that writes nothing resumes on the thread pool - so warning about the disk
+    /// from there ended the export at that page, taking the pages behind it with it. The
+    /// message is buffered on the client's warning channel and written by a drain on the
+    /// pipeline thread: one per failed save, and every page still reaches the output.
+    /// </summary>
+    [Fact]
+    public void A_failed_boundary_save_warns_and_the_export_goes_on()
+    {
+        var dir = NewDir();
+        var output = Path.Combine(dir, "out.jsonl");
+        var checkpoint = Path.Combine(dir, "run.checkpoint");
+        try
+        {
+            // Every save into this path fails: Save stages its bytes under this name first, and
+            // no account writes a file over a directory. The directory holding it is not sealed
+            // instead, the way a read-only disk would seal it, because the export writes its
+            // output there too and that write is not what is under test.
+            Directory.CreateDirectory(checkpoint + ".tmp");
+
+            var handler = new EmptyMiddlePageHandler();
+            using var transport = MgxTransportScope.Inject(handler);
+            var (warnings, errors) = ExportReporting(output, checkpoint);
+
+            Assert.Equal(0, errors);
+
+            // Both boundaries carrying a nextLink try to save, and both fail.
+            Assert.Equal(2, warnings.Count(
+                w => w.StartsWith("Checkpoint save failed (page boundary)", StringComparison.Ordinal)));
+
+            // The empty page sits behind the second request, so an export that died reporting
+            // its failed save never asks for the third - and the output ends two items short.
+            Assert.Equal(3, handler.Urls.Count);
+            Assert.Contains("skiptoken=P3", handler.Urls[2]);
+            Assert.Equal(
+                ["{\"id\":\"u1\"}", "{\"id\":\"u2\"}", "{\"id\":\"u4\"}", "{\"id\":\"u5\"}"],
+                Lines(output));
         }
         finally
         {

@@ -15,27 +15,6 @@ namespace Mgx.IntegrationTests;
 [Collection("Pipeline")]
 public class StalledBodyTests
 {
-    /// <summary>Sends one byte of body and then nothing, honoring only the read's own token.</summary>
-    private sealed class StallingContent : HttpContent
-    {
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-            => await SerializeToStreamAsync(stream, context, CancellationToken.None);
-
-        protected override async Task SerializeToStreamAsync(
-            Stream stream, TransportContext? context, CancellationToken cancellationToken)
-        {
-            stream.WriteByte((byte)'{');
-            await stream.FlushAsync(cancellationToken);
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-        }
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 4096;
-            return true;
-        }
-    }
-
     private sealed class StallingHandler(HttpStatusCode status) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

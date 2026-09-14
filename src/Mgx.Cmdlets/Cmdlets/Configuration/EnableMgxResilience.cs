@@ -158,6 +158,26 @@ public class EnableMgxResilience : PSCmdlet
             var clientProp = instance.GetType().GetProperty("GraphHttpClient");
             var currentClient = clientProp?.GetValue(instance) as HttpClient;
 
+            // Already enabled and our client is still the one installed: nothing to do. Reading
+            // the session is not a change, so this answer is the same with -WhatIf as without.
+            // The null test earns its place now that the session's client is only forced below
+            // the gate: a session holding nothing would otherwise compare equal to an injection
+            // whose build failed, and report itself active.
+            if (IsEnabled && currentClient != null && ReferenceEquals(currentClient, ResilientSdkClient))
+            {
+                WriteVerbose("MgxResilience is already active.");
+                return;
+            }
+
+            // Everything past this line changes state, so all of it is under the gate. The
+            // pre-initialization resets the pipeline factory and the SDK probe sends a real
+            // request and leaves a client on the session; dropping the wrapper we installed
+            // leaves Disable-MgxResilience with no record of what it is taking off. What -WhatIf
+            // reports is decided above it, from state this cmdlet has only read.
+            if (!ShouldProcess("Microsoft.Graph SDK HttpClient",
+                "Replace with Polly resilience pipeline (retry, circuit breaker, rate limiting)"))
+                return;
+
             // Pre-initialize Mgx's own HTTP client before the SDK probe runs.
             // The probe calls Invoke-MgGraphRequest which changes Azure Identity internal
             // state and breaks GetAuthenticationProviderAsync for subsequent callers.
@@ -180,14 +200,8 @@ public class EnableMgxResilience : PSCmdlet
                 return;
             }
 
-            // If already enabled, check if our client is still active
             if (IsEnabled)
             {
-                if (ReferenceEquals(currentClient, ResilientSdkClient))
-                {
-                    WriteVerbose("MgxResilience is already active.");
-                    return;
-                }
                 // Our client was replaced (e.g., by Connect-MgGraph or Set-MgRequestContext).
                 WriteVerbose("MgxResilience was reset by SDK. Re-injecting resilience...");
                 // Not disposed: HttpClient.Dispose cancels its pending-request token source and
@@ -201,10 +215,6 @@ public class EnableMgxResilience : PSCmdlet
                 // Reset circuit breaker / rate limiter state from the previous tenant
                 ResiliencePipelineFactory.Reset();
             }
-
-            if (!ShouldProcess("Microsoft.Graph SDK HttpClient",
-                "Replace with Polly resilience pipeline (retry, circuit breaker, rate limiting)"))
-                return;
 
             // Wrap the genuine client, never a wrapper. The session can still be holding one from
             // an earlier import - its statics went with that import - and a second layer over it
@@ -239,7 +249,7 @@ public class EnableMgxResilience : PSCmdlet
     private HttpClient? ForceInitializeAndGetClient(object instance, PropertyInfo? clientProp)
     {
         // Use the Graph endpoint from the session (sovereign cloud support)
-        var endpoint = MgxCmdletBase.GetGraphEndpoint(WriteWarning, WriteVerbose) ?? "https://graph.microsoft.com";
+        var endpoint = MgxCmdletBase.GetGraphEndpoint(WriteWarning, WriteVerbose) ?? MgxCmdletBase.DefaultGraphEndpoint;
 
         // Save AzureADEndpoint before probe. Invoke-MgGraphRequest replaces
         // GraphSession.Environment with a new object that has an empty AzureADEndpoint,

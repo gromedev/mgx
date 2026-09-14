@@ -5,7 +5,7 @@
     assemblies the neighboring modules already loaded, and teardown leaves nothing armed.
     A real Graph call under load order stays with tests/Live and the benchmarks.
 
-    Provenance: GraphSDK-2148 (module isolation) - see tests/CORPUS.md. Az.Accounts ships its
+    Provenance: GraphSDK-2148 (module isolation) - see tmp/CORPUS.md (private). Az.Accounts ships its
     own System.Text.Json; the interesting failure is a TypeLoadException the first time an
     engine type JITs, which is why the option round-trip and telemetry calls are the probe.
 

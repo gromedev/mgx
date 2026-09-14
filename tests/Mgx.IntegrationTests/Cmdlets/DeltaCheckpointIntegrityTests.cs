@@ -31,6 +31,16 @@ public class DeltaCheckpointIntegrityTests
     """;
     private const string ServerError = """{"error":{"code":"InternalServerError","message":"boom"}}""";
 
+    private const string EmptyChangesPage = """
+    {"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users/delta?$skiptoken=B3"}
+    """;
+    private const string ChangesPage3Linked = """
+    {"value":[{"id":"b4"}],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users/delta?$skiptoken=B4"}
+    """;
+    private const string EmptyFinalPage = """
+    {"value":[],"@odata.deltaLink":"https://graph.microsoft.com/v1.0/users/delta?$deltatoken=D2"}
+    """;
+
     private static PowerShell Shell()
     {
         var ps = PowerShell.Create();
@@ -42,6 +52,38 @@ public class DeltaCheckpointIntegrityTests
         ps.Invoke();
         ps.Commands.Clear();
         return ps;
+    }
+
+    /// <summary>
+    /// The shape a delta enumeration is full of: pages behind nextLinks with nothing in them,
+    /// including the last one before the deltaLink. PageIterator raises its empty-page limit to
+    /// 1000 for exactly this, so the sync walks them rather than giving up. Every answer takes
+    /// a real asynchronous hop - a socket read always yields and Task.FromResult never does,
+    /// and the thread the iterator resumes on is what these pages are here to settle.
+    /// </summary>
+    private sealed class EmptyMiddlePageHandler : HttpMessageHandler
+    {
+        private readonly object _lock = new();
+        public List<string> Urls { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.ToString();
+            lock (_lock) { Urls.Add(url); }
+
+            await Task.Yield();
+
+            var body = url.Contains("skiptoken=B4", StringComparison.Ordinal) ? EmptyFinalPage
+                : url.Contains("skiptoken=B3", StringComparison.Ordinal) ? ChangesPage3Linked
+                : url.Contains("skiptoken=B2", StringComparison.Ordinal) ? EmptyChangesPage
+                : ChangesPage1;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            };
+        }
     }
 
     private sealed record Env(string Dir, string DeltaPath, string CheckpointPath, string OutputPath);
@@ -90,6 +132,22 @@ public class DeltaCheckpointIntegrityTests
           .AddParameter("CheckpointPath", env.CheckpointPath);
         try { ps.Invoke(); }
         catch (CmdletInvocationException) { }
+    }
+
+    /// <summary>
+    /// A sync whose warnings and error records the caller reads. Nothing is swallowed here: a
+    /// run that dies off the pipeline thread has to fail the test that says it does not.
+    /// </summary>
+    private static (List<string> Warnings, int Errors) SyncReporting(Env env)
+    {
+        using var ps = Shell();
+        ps.AddCommand("Sync-MgxDelta")
+          .AddParameter("Uri", "/users/delta")
+          .AddParameter("DeltaPath", env.DeltaPath)
+          .AddParameter("CheckpointPath", env.CheckpointPath)
+          .AddParameter("OutputFile", env.OutputPath);
+        ps.Invoke();
+        return ([.. ps.Streams.Warning.Select(w => w.Message)], ps.Streams.Error.Count);
     }
 
     /// <summary>A checkpoint torn between the write and the rename: no position in it at all.</summary>
@@ -659,6 +717,54 @@ public class DeltaCheckpointIntegrityTests
 
             Assert.Equal(1, handler.RequestCount - before);
             Assert.Equal(["{\"id\":\"b1\"}", "{\"id\":\"b2\"}", "{\"id\":\"b3\"}"], Ids(env.OutputPath));
+        }
+        finally { try { Directory.Delete(env.Dir, true); } catch { } }
+    }
+
+    /// <summary>
+    /// A checkpoint the sync cannot write, over pages that are empty behind nextLinks. The
+    /// page-boundary callback runs on whichever thread the iterator resumed on, and a page that
+    /// writes nothing resumes on the thread pool - so warning about the disk from there ended
+    /// the sync at that page: the items behind it were never fetched, and the delta token never
+    /// advanced, leaving the caller to re-enumerate from the old one. The message is buffered
+    /// on the client's warning channel and written by a drain on the pipeline thread: one per
+    /// failed save, and the enumeration runs to the deltaLink.
+    /// <para>
+    /// The last save fails at the boundary before the empty final page, so no item follows it
+    /// and the per-item drain never comes round again. The drain on the way out is what carries
+    /// that one.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_failed_boundary_save_warns_and_the_sync_goes_on()
+    {
+        var env = NewEnv();
+        try
+        {
+            // Every save into this path fails: Save stages its bytes under this name first, and
+            // no account writes a file over a directory. The directory holding it is not sealed
+            // instead, the way a read-only disk would seal it, because the sync writes its
+            // output and its delta state there too and neither write is what is under test.
+            Directory.CreateDirectory(env.CheckpointPath + ".tmp");
+
+            var handler = new EmptyMiddlePageHandler();
+            using var transport = MgxTransportScope.Inject(handler);
+            var (warnings, errors) = SyncReporting(env);
+
+            Assert.Equal(0, errors);
+
+            // Each of the three boundaries carrying a nextLink tries to save, and each fails.
+            Assert.Equal(3, warnings.Count(
+                w => w.StartsWith("Checkpoint save failed (page boundary)", StringComparison.Ordinal)));
+
+            // The empty page sits behind the second request, so a sync that died reporting its
+            // failed save never asks for the rest - where the items and the token both are.
+            Assert.Equal(4, handler.Urls.Count);
+            Assert.Contains("skiptoken=B4", handler.Urls[3]);
+            Assert.Equal(
+                ["{\"id\":\"b1\"}", "{\"id\":\"b2\"}", "{\"id\":\"b4\"}"],
+                Ids(env.OutputPath));
+            Assert.Contains("$deltatoken=D2", DeltaState.Load(env.DeltaPath)!.DeltaLink);
         }
         finally { try { Directory.Delete(env.Dir, true); } catch { } }
     }

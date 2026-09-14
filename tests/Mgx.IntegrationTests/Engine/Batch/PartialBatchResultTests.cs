@@ -1162,6 +1162,111 @@ public class PartialBatchResultTests
     }
 
     /// <summary>
+    /// Runs the batch under -WhatIf over per-item bodies and returns the gate's line, the error
+    /// records it wrote and what reached the wire. -WhatIf's whole purpose is saying what would
+    /// happen, so a gate that describes requests the run would refuse is the defect, and the
+    /// records naming them are half of the answer.
+    /// </summary>
+    private static (string Line, string[] Errors, int Requests) GateSaysOfBodies(
+        params object[] items)
+    {
+        var wire = new CountingHandler();
+        using (MgxTransportScope.Inject(wire))
+        {
+            var host = new GateHost();
+            using var runspace = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace(host);
+            runspace.Open();
+            using var ps = System.Management.Automation.PowerShell.Create();
+            ps.Runspace = runspace;
+            ps.AddCommand("Import-Module")
+              .AddParameter("Assembly", typeof(Mgx.Cmdlets.Cmdlets.Batch.InvokeMgxBatchRequest).Assembly);
+            ps.Invoke();
+            ps.Commands.Clear();
+            ps.AddScript("function Get-MgContext { [PSCustomObject]@{ TenantId = 'test-tenant-00000000-0000-0000-0000-000000000000' } }");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            ps.AddCommand("Invoke-MgxBatchRequest")
+              .AddParameter("Uri", items)
+              .AddParameter("WhatIf", true);
+            ps.Invoke();
+
+            return (
+                Assert.Single(host.Recorder.Lines, l => l.Contains("What if:", StringComparison.Ordinal)),
+                ps.Streams.Error.Select(e => e.Exception.Message).ToArray(),
+                wire.Requests);
+        }
+    }
+
+    /// <summary>
+    /// The gate over a batch two of whose items will not be sent: one body the marker guard
+    /// refuses, one the JSON parser refuses. The count used to be everything that was piped
+    /// in, so the line announced three requests where the run would make one - at the one
+    /// surface whose purpose is saying what is about to happen - and said nothing at all about
+    /// the two it would refuse. The validation and the guard run before the gate now, so the
+    /// count is what would be sent and the refusals are named beside it.
+    /// </summary>
+    [Fact]
+    public void The_gate_names_the_count_that_will_be_sent_and_the_refusals()
+    {
+        var (line, errors, requests) = GateSaysOfBodies(
+            new System.Collections.Hashtable
+            {
+                ["Url"] = "/users/u1", ["Method"] = "PATCH",
+                ["Body"] = new System.Collections.Hashtable { ["displayName"] = "sent" }
+            },
+            new System.Collections.Hashtable
+            {
+                ["Url"] = "/users/u2", ["Method"] = "PATCH",
+                ["Body"] = new System.Collections.Hashtable { ["passwordProfile"] = "***REDACTED***" }
+            },
+            new System.Collections.Hashtable
+            {
+                ["Url"] = "/users/u3", ["Method"] = "PATCH", ["Body"] = "not json at all"
+            });
+
+        // One request, singular, and the two refusals as their own count.
+        Assert.Contains("Send batch\" on target \"PATCH 1 request via $batch; 2 refused\"",
+            line, StringComparison.Ordinal);
+
+        // The refusals are error records, written under -WhatIf as without it: a body this run
+        // will not send is not an action the gate governs.
+        Assert.Equal(2, errors.Length);
+        Assert.Contains(errors, e => e.Contains("PATCH /users/u2", StringComparison.Ordinal)
+                                     && e.Contains("redaction marker", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.Contains("PATCH /users/u3", StringComparison.Ordinal)
+                                     && e.Contains("not valid JSON", StringComparison.Ordinal));
+
+        Assert.Equal(0, requests);
+    }
+
+    /// <summary>
+    /// Nothing refused, so nothing is named: the line a batch with no refusals gets is the one
+    /// it always got, and the clause is not appended empty.
+    /// </summary>
+    [Fact]
+    public void The_gate_names_no_refusals_when_there_are_none()
+    {
+        var (line, errors, requests) = GateSaysOfBodies(
+            new System.Collections.Hashtable
+            {
+                ["Url"] = "/users/u1", ["Method"] = "PATCH",
+                ["Body"] = new System.Collections.Hashtable { ["displayName"] = "a" }
+            },
+            new System.Collections.Hashtable
+            {
+                ["Url"] = "/users/u2", ["Method"] = "PATCH",
+                ["Body"] = new System.Collections.Hashtable { ["displayName"] = "b" }
+            });
+
+        Assert.Contains("Send batch\" on target \"PATCH 2 requests via $batch\"",
+            line, StringComparison.Ordinal);
+        Assert.DoesNotContain("refused", line, StringComparison.Ordinal);
+        Assert.Empty(errors);
+        Assert.Equal(0, requests);
+    }
+
+    /// <summary>
     /// Several write methods alongside reads keep the shape they already had: the total, then
     /// the writes by method. It states a total and a subset of it, and nothing in it is a
     /// count of requests that are not there.

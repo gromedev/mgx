@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.1.5
+
+### Fixed
+
+- `Export-MgxCollection` and `Sync-MgxDelta` stop a second run resuming the same interrupted operation rather than interleaving both runs' rows in one output file.
+- Resumed runs hold their output file open until the last write, so a concurrent run over the same command line cannot take the file in between.
+- Concurrent promotions over one output file on macOS or Linux no longer both succeed; the second stops and the first run's rows survive.
+- Recovering an interrupted run removes a link at the staging name rather than following it, no longer hangs on a pipe there, and stops on a directory naming it.
+- Resume checkpoints whose temp file is held by another run or cannot be opened stop the run before anything is written rather than re-enumerating over the file.
+- Output files the account cannot open, or a directory in their place, stop a resume naming the reason and keep the checkpoint rather than reporting the items missing.
+- Failed copies during recovery stop the run with both files left as found instead of reporting the temp file missing and starting over.
+- Resume checkpoints from before 2.1 refused by another run keep their temp file, and `Sync-MgxDelta` recovers that shape as `Export-MgxCollection` does.
+- Resume stops report what proceeding would have done to which file, and unopenable files are described by the open's own reason rather than always as a permission.
+- `Sync-MgxDelta` no longer refuses its own retry after an expired delta token as another sync's.
+- `Export-MgxCollection -WhatIf` on an interrupted export reports the stop the run would reach rather than previewing an append, and previews nothing it would not do.
+- `Invoke-MgxRequest` with several values piped into a `-Uri` without a placeholder asks the checkpoint question once, as documented.
+- `Set-MgxOption` with no option parameter no longer previews or prompts for a change it does not make, and `-Reset` beside an option reports the option ignored.
+- `Invoke-MgxBatchRequest` refuses an item whose body cannot be read for redaction and sends the rest rather than ending the run.
+- Dead-letter lines no longer carry pre-authenticated URLs with their secrets, whether as the item URL, a bare body, or a value inside one.
+- Relative pre-authenticated URLs in batch bodies are cut from the dead-letter file as absolute ones are.
+- Unwritable dead-letter files are reported as errors before the batch is sent, and a batch that fails nothing leaves no empty file.
+- Batch item errors and session telemetry survive runs ended by `-WarningAction Stop` or `-ErrorAction Stop`.
+- Dead-letter lines carrying the redaction marker in any value are refused on re-pipe before the first chunk is sent, with the refusal naming what it found.
+- `-DeadLetterPath` on a non-file-system provider or an empty path is refused rather than writing into the working directory.
+- `Invoke-MgxBatchRequest -WhatIf` reports the count to be sent and the items it would refuse.
+- Batch outcome warnings read as one sentence when bodies were withheld or the dead-letter file failed.
+- Two batches sharing one dead-letter path no longer lose each other's lines when the clean one finishes first.
+- `-Debug` traces and the dead-letter file redact the same names and URLs, with the remaining differences documented.
+- `Enable-MgxResilience -WhatIf` previews without touching the session, and `Disable-MgxResilience -WhatIf` names the action it would take.
+- Removing the module restores every `Set-MgxOption` setting, the endpoint, and the telemetry counters to their defaults, and a re-import reads the endpoint from the session.
+- The circuit-breaker minimum `Set-MgxOption` accepts matches the minimum the breaker accepts.
+
+### Added
+
+- Added a committed benchmark baseline (`tests/benchmarks/baseline.json`) and a comparison run reporting each scenario against it.
+- Added a programmable fault plan for the mock Graph server, a pathological gauntlet, and auth-replacement and module-interference benchmarks.
+- Added a SharePoint drive latency measurement that refuses to summarize a run whose clocks disagree.
+- Added fault injection at every point of an operation and pagination checks at page-size boundaries.
+- Added a help-freshness test comparing the compiled help with its markdown source.
+- Added a Pester CI gate that fails on a test file that could not run.
+
+### Changed
+
+- A general tidy of the tests tree.
+
+### Documentation
+
+- Updated help documentation with what `-WhatIf` skips, what the dead-letter file holds, and which routes hold the output open, and completed every SYNTAX block.
+
 ## 2.1.4
 
 # Changelog

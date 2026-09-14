@@ -19,8 +19,17 @@ public class CheckpointRetentionTests
         typeof(Mgx.Cmdlets.Base.MgxCmdletBase).GetMethod(
             "TryAdoptOrphanedTemp", BindingFlags.Static | BindingFlags.NonPublic)!;
 
-    private static bool TryAdopt(string outputPath, long itemCount) =>
-        (bool)Adopt.Invoke(null, [outputPath, itemCount])!;
+    /// <summary>
+    /// The two arguments, followed by an empty slot for each out parameter the method carries.
+    /// Sized off the method, since reflection wants a slot for every one of them.
+    /// </summary>
+    private static bool TryAdopt(string outputPath, long itemCount)
+    {
+        var slots = new object?[Adopt.GetParameters().Length];
+        slots[0] = outputPath;
+        slots[1] = itemCount;
+        return (bool)Adopt.Invoke(null, slots)!;
+    }
 
     private static string NewDir()
     {

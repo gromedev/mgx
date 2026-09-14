@@ -126,13 +126,18 @@ public sealed class ResilientGraphClientOptions
             : throw new ArgumentOutOfRangeException(nameof(CircuitBreakerFailureRatio), value, "Must be between 0.01 and 1.0.");
     }
 
-    /// <summary>Minimum requests before circuit breaker evaluates. Range: 1-1,000. Default: 40.</summary>
+    /// <summary>
+    /// Minimum requests before circuit breaker evaluates. Range: 2-1,000. Default: 40.
+    /// The floor is 2 because that is the least Polly's breaker will hold: a lower value is
+    /// refused when the pipeline is built, one call after the option was set and in Polly's
+    /// words, so it is refused here instead.
+    /// </summary>
     public int CircuitBreakerMinThroughput
     {
         get => _circuitBreakerMinThroughput;
-        init => _circuitBreakerMinThroughput = value is > 0 and <= 1000
+        init => _circuitBreakerMinThroughput = value is >= 2 and <= 1000
             ? value
-            : throw new ArgumentOutOfRangeException(nameof(CircuitBreakerMinThroughput), value, "Must be between 1 and 1,000.");
+            : throw new ArgumentOutOfRangeException(nameof(CircuitBreakerMinThroughput), value, "Must be between 2 and 1,000.");
     }
 
     /// <summary>Circuit breaker sampling window in seconds. Range: 5-300. Default: 30.</summary>

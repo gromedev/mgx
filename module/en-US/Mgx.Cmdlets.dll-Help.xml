@@ -10,7 +10,7 @@
       </maml:description>
     </command:details>
     <maml:description>
-      <maml:para>Disable-MgxResilience removes the Polly resilience injection from the Microsoft.Graph SDK's HTTP transport, restoring the original SDK HttpClient that was saved by Enable-MgxResilience.</maml:para>
+      <maml:para>Disable-MgxResilience removes the Polly resilience injection from the Microsoft.Graph SDK's HTTP transport, restoring the original SDK HttpClient that was saved by Enable-MgxResilience. A client the SDK replaced after the injection went on - a Connect-MgGraph to another tenant builds one - is not this module's to restore and is left as it was found, with a warning saying so; the injection's own state comes off either way.</maml:para>
       <maml:para>After calling this cmdlet, SDK cmdlets revert to their default retry behavior.</maml:para>
     </maml:description>
     <command:syntax>
@@ -759,7 +759,7 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>CheckpointPath</maml:name>
           <maml:description>
-            <maml:para>Path to a JSON checkpoint file for resumable exports. Deleted on successful completion.</maml:para>
+            <maml:para>Path to a JSON checkpoint file for resumable exports. Deleted on successful completion. A run stops - with nothing written to the output, the checkpoint or a temp - when the temp file the checkpoint names, or the output it would append to or replace, is open in another export or cannot be opened for writing (a permission, a directory or a pipe at the path, a link that cannot be followed, a path too long for the file system, a socket, a directory above it this account cannot search), or when the copy it stages before promoting a temp fails, in which case both files are left as found: the rows it counts are in that file and this checkpoint is the only thing that counts them, and exporting anyway would write over both. This holds whether the run would append, promote a temp, or export from the beginning after its temp vanished. The copy a promotion stages is written beside the output under a name the run creates itself, and the name is cleared first: a link, a pipe, a socket, a copy left by an interrupted promotion or a copy this account cannot open standing there is deleted and the removal reported as a warning, while a directory or a copy another run holds stops the run instead. A -WhatIf pass removes nothing: where something stands at that name it says what the run would remove there and leaves it, and where the name is clear it makes the same create at no length before taking it back - so a preview stops where the run would and deletes nothing on the way. Wait for that export to finish, give this run its own -OutputFile and -CheckpointPath, or grant write access to that file - or to the directory holding it, where that is what the run names - and run again. A resumed or promoting run holds the output open for as long as it is appending, which is what stops a second run over the same command line; a run recovering a checkpoint older than 2.1 opens the output as it always has. On Linux and macOS a PowerShell reader of a held file fails with a sharing violation until the run ends, while tail and cat read it as before.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
           <dev:type>
@@ -975,7 +975,7 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>CheckpointPath</maml:name>
         <maml:description>
-          <maml:para>Path to a JSON checkpoint file for resumable exports. Deleted on successful completion.</maml:para>
+          <maml:para>Path to a JSON checkpoint file for resumable exports. Deleted on successful completion. A run stops - with nothing written to the output, the checkpoint or a temp - when the temp file the checkpoint names, or the output it would append to or replace, is open in another export or cannot be opened for writing (a permission, a directory or a pipe at the path, a link that cannot be followed, a path too long for the file system, a socket, a directory above it this account cannot search), or when the copy it stages before promoting a temp fails, in which case both files are left as found: the rows it counts are in that file and this checkpoint is the only thing that counts them, and exporting anyway would write over both. This holds whether the run would append, promote a temp, or export from the beginning after its temp vanished. The copy a promotion stages is written beside the output under a name the run creates itself, and the name is cleared first: a link, a pipe, a socket, a copy left by an interrupted promotion or a copy this account cannot open standing there is deleted and the removal reported as a warning, while a directory or a copy another run holds stops the run instead. A -WhatIf pass removes nothing: where something stands at that name it says what the run would remove there and leaves it, and where the name is clear it makes the same create at no length before taking it back - so a preview stops where the run would and deletes nothing on the way. Wait for that export to finish, give this run its own -OutputFile and -CheckpointPath, or grant write access to that file - or to the directory holding it, where that is what the run names - and run again. A resumed or promoting run holds the output open for as long as it is appending, which is what stops a second run over the same command line; a run recovering a checkpoint older than 2.1 opens the output as it always has. On Linux and macOS a PowerShell reader of a held file fails with a sharing violation until the run ends, while tail and cat read it as before.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
         <dev:type>
@@ -1974,7 +1974,7 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
           <maml:name>Body</maml:name>
           <maml:description>
             <maml:para>Request body for all requests when piping string URLs. Ignored when pipeline input carries its own Body member.</maml:para>
-            <maml:para>Bodies follow the same serialization contract as Invoke-MgxRequest -Body. An item whose body serialization refuses a value (a SecureString, NaN) fails on its own, like an item whose body is not valid JSON; the rest of the batch is sent.</maml:para>
+            <maml:para>Bodies follow the same serialization contract as Invoke-MgxRequest -Body. An item whose body serialization refuses a value (a SecureString, NaN) fails on its own, like an item whose body is not valid JSON; the rest of the batch is sent. So does an item whose body the redaction check cannot read: a raw-string body carrying an unpaired surrogate escape - `{"displayName":"Jos\ud83d"}` - is a document the JSON parser accepts and the check cannot read a string out of, and the check is what decides whether a body may be sent, so that item is refused naming the reason and the rest of the batch is sent.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">Object</command:parameterValue>
           <dev:type>
@@ -1986,7 +1986,12 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>DeadLetterPath</maml:name>
           <maml:description>
-            <maml:para>Path to a JSONL file where the batch's failed and never-sent items are appended: anything the server answered with a status &gt;= 400, the items of a chunk whose own POST was refused, which carry that refusal's status, and the items of chunks that were never POSTed, which carry status 0. Nothing the server confirmed is ever written, so the file holds only work that is still outstanding. Each line contains Url, Method, Body (with sensitive fields redacted), Status, Error, and Timestamp. It is a record of what to retry, not a request you can replay directly: the redaction that keeps passwords out of the file also means a redacted Body is no longer the body that was sent. Read it to decide what to resubmit, and supply the sensitive fields again yourself. A refused item's request did reach the server, so it may have been applied without an answer coming back; resending one is a decision about duplicates rather than a free retry.</maml:para>
+            <maml:para>Path to a JSONL file where the batch's failed and never-sent items are appended: anything the server answered with a status &gt;= 400, the items of a chunk whose own POST failed, which carry that failure's status, and the items of chunks that were never POSTed, which carry status 0. Nothing the server confirmed is ever written, so the file holds only work that is still outstanding. Each line holds Timestamp, Url, Method and Status, then Body where the request had one, with sensitive fields redacted, then Error where the item's own response carried an error message: a never-sent item has no response to read one from, and neither does an item of a refused chunk the server did not answer, so their lines end at Body. It is a record of what to retry, not a request you can replay directly: the redaction that keeps passwords out of the file also means a redacted Body is no longer the body that was sent. Any field whose name carries password, secret, credential, key, token, assertion, passphrase or connectionstring is replaced by a redaction marker, and so is any field whose name carries downloadUrl, because a pre-authenticated URL fetches the file with no token of its own. A value that is a URL carrying a capability parameter - `sig`, `tempauth`, `guestaccesstoken`, `authkey`, `X-Amz-Signature` - is cut after that parameter and the rest replaced by the marker, the way a -Debug trace cuts it, so the host and the parameter name still say which URL failed; an ordinary link is left whole, because `@odata.nextLink` and a `webUrl` are half of what the line is read for. Where the URL itself names the secret - resetPassword, uploadSecret, addKey, synchronization/secrets - the whole Body is that marker, because those bodies hold the credential under a name that says nothing. A body the redaction cannot walk at all - one naming the same property twice is such a body - gets the marker whole for the same reason, and the run writes a warning naming the item whose body was withheld. What stands in the file is:</maml:para>
+            <maml:para></maml:para>
+            <maml:para>***REDACTED***</maml:para>
+            <maml:para></maml:para>
+            <maml:para>Read it to decide what to resubmit, and supply the sensitive fields again yourself. Re-piping the file - `Get-Content dead.jsonl | ConvertFrom-Json | Invoke-MgxBatchRequest` - resends the lines that carry no marker, and refuses the ones that do as an error record before the first chunk leaves: a Body that is the marker whole is not JSON, and a Body carrying it in a field parses but is no longer the body that was sent, so that one is refused naming the field. Any body carrying that marker text is refused the same way before the first chunk leaves, whether it came from the file or not. Under -ErrorAction Stop - which this cmdlet's description recommends - the pipeline then ends with nothing sent at all: re-pipe at the default error preference, or filter the marker lines out first. A refused item carries that status whether its POST reached the server and went unanswered or never left at all - an open circuit, a rate limiter with no permit for it - and the status does not separate the two. Read it as the first: the write may have been applied, so resending one is a decision about duplicates rather than a free retry. Only status 0 says nothing was sent.</maml:para>
+            <maml:para>The file is opened before the first request goes out and held open for the run, so a path this run cannot write - a directory standing at it, a parent directory that is not there, a file this account may not write - is refused with nothing sent at all, and the error says so: fix the path and run the same command again. It has to be a file system path with something in it. `Env:\X` resolves to a bare name relative to nothing and an empty path resolves to the working directory, so both are refused rather than written somewhere nobody named. A run with no failed and no never-sent items has no lines for the file, and one it created for them is removed again, so a batch that succeeded whole leaves nothing behind; a file that was already there holds an earlier run's outstanding work and is left as it was, and so is one a second run appending to the same path has put a line in.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
           <dev:type>
@@ -2005,6 +2010,18 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
             <maml:uri />
           </dev:type>
           <dev:defaultValue>False</dev:defaultValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
+          <maml:name>ConsistencyLevel</maml:name>
+          <maml:description>
+            <maml:para>ConsistencyLevel header added to each individual batch item. Required when any batch item URL contains $search (Graph advanced query capabilities). Takes precedence over the same key in -Headers. Source: Advanced query capabilities on Microsoft Entra ID objects (https://learn.microsoft.com/en-us/graph/aad-advanced-queries)</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
+          <dev:type>
+            <maml:name>String</maml:name>
+            <maml:uri />
+          </dev:type>
+          <dev:defaultValue>None</dev:defaultValue>
         </command:parameter>
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>Headers</maml:name>
@@ -2058,7 +2075,8 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
           <maml:name>WhatIf</maml:name>
           <maml:description>
-            <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run.</maml:para>
+            <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run. The gate covers reads as well as writes: an all-GET batch is described and not sent, because even a read batch spends resource units, can be throttled, and emits objects into the pipeline. Invoke-MgxRequest makes the other choice and sends its reads under -WhatIf.</maml:para>
+            <maml:para>The count it names is what would be sent. Bodies are validated and checked for the redaction marker before the gate, so an item either of those refuses is left out of that count and named beside it - `PATCH 1 request via $batch; 2 refused` - and each refusal is written as the error record it is, under -WhatIf as without it: a refusal is not an action the gate governs.</maml:para>
           </maml:description>
           <dev:type>
             <maml:name>SwitchParameter</maml:name>
@@ -2097,7 +2115,7 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
         <maml:name>Body</maml:name>
         <maml:description>
           <maml:para>Request body for all requests when piping string URLs. Ignored when pipeline input carries its own Body member.</maml:para>
-          <maml:para>Bodies follow the same serialization contract as Invoke-MgxRequest -Body. An item whose body serialization refuses a value (a SecureString, NaN) fails on its own, like an item whose body is not valid JSON; the rest of the batch is sent.</maml:para>
+          <maml:para>Bodies follow the same serialization contract as Invoke-MgxRequest -Body. An item whose body serialization refuses a value (a SecureString, NaN) fails on its own, like an item whose body is not valid JSON; the rest of the batch is sent. So does an item whose body the redaction check cannot read: a raw-string body carrying an unpaired surrogate escape - `{"displayName":"Jos\ud83d"}` - is a document the JSON parser accepts and the check cannot read a string out of, and the check is what decides whether a body may be sent, so that item is refused naming the reason and the rest of the batch is sent.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">Object</command:parameterValue>
         <dev:type>
@@ -2109,7 +2127,12 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>DeadLetterPath</maml:name>
         <maml:description>
-          <maml:para>Path to a JSONL file where the batch's failed and never-sent items are appended: anything the server answered with a status &gt;= 400, the items of a chunk whose own POST was refused, which carry that refusal's status, and the items of chunks that were never POSTed, which carry status 0. Nothing the server confirmed is ever written, so the file holds only work that is still outstanding. Each line contains Url, Method, Body (with sensitive fields redacted), Status, Error, and Timestamp. It is a record of what to retry, not a request you can replay directly: the redaction that keeps passwords out of the file also means a redacted Body is no longer the body that was sent. Read it to decide what to resubmit, and supply the sensitive fields again yourself. A refused item's request did reach the server, so it may have been applied without an answer coming back; resending one is a decision about duplicates rather than a free retry.</maml:para>
+          <maml:para>Path to a JSONL file where the batch's failed and never-sent items are appended: anything the server answered with a status &gt;= 400, the items of a chunk whose own POST failed, which carry that failure's status, and the items of chunks that were never POSTed, which carry status 0. Nothing the server confirmed is ever written, so the file holds only work that is still outstanding. Each line holds Timestamp, Url, Method and Status, then Body where the request had one, with sensitive fields redacted, then Error where the item's own response carried an error message: a never-sent item has no response to read one from, and neither does an item of a refused chunk the server did not answer, so their lines end at Body. It is a record of what to retry, not a request you can replay directly: the redaction that keeps passwords out of the file also means a redacted Body is no longer the body that was sent. Any field whose name carries password, secret, credential, key, token, assertion, passphrase or connectionstring is replaced by a redaction marker, and so is any field whose name carries downloadUrl, because a pre-authenticated URL fetches the file with no token of its own. A value that is a URL carrying a capability parameter - `sig`, `tempauth`, `guestaccesstoken`, `authkey`, `X-Amz-Signature` - is cut after that parameter and the rest replaced by the marker, the way a -Debug trace cuts it, so the host and the parameter name still say which URL failed; an ordinary link is left whole, because `@odata.nextLink` and a `webUrl` are half of what the line is read for. Where the URL itself names the secret - resetPassword, uploadSecret, addKey, synchronization/secrets - the whole Body is that marker, because those bodies hold the credential under a name that says nothing. A body the redaction cannot walk at all - one naming the same property twice is such a body - gets the marker whole for the same reason, and the run writes a warning naming the item whose body was withheld. What stands in the file is:</maml:para>
+          <maml:para></maml:para>
+          <maml:para>***REDACTED***</maml:para>
+          <maml:para></maml:para>
+          <maml:para>Read it to decide what to resubmit, and supply the sensitive fields again yourself. Re-piping the file - `Get-Content dead.jsonl | ConvertFrom-Json | Invoke-MgxBatchRequest` - resends the lines that carry no marker, and refuses the ones that do as an error record before the first chunk leaves: a Body that is the marker whole is not JSON, and a Body carrying it in a field parses but is no longer the body that was sent, so that one is refused naming the field. Any body carrying that marker text is refused the same way before the first chunk leaves, whether it came from the file or not. Under -ErrorAction Stop - which this cmdlet's description recommends - the pipeline then ends with nothing sent at all: re-pipe at the default error preference, or filter the marker lines out first. A refused item carries that status whether its POST reached the server and went unanswered or never left at all - an open circuit, a rate limiter with no permit for it - and the status does not separate the two. Read it as the first: the write may have been applied, so resending one is a decision about duplicates rather than a free retry. Only status 0 says nothing was sent.</maml:para>
+          <maml:para>The file is opened before the first request goes out and held open for the run, so a path this run cannot write - a directory standing at it, a parent directory that is not there, a file this account may not write - is refused with nothing sent at all, and the error says so: fix the path and run the same command again. It has to be a file system path with something in it. `Env:\X` resolves to a bare name relative to nothing and an empty path resolves to the working directory, so both are refused rather than written somewhere nobody named. A run with no failed and no never-sent items has no lines for the file, and one it created for them is removed again, so a batch that succeeded whole leaves nothing behind; a file that was already there holds an earlier run's outstanding work and is left as it was, and so is one a second run appending to the same path has put a line in.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
         <dev:type>
@@ -2130,14 +2153,14 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
         </dev:type>
         <dev:defaultValue>False</dev:defaultValue>
       </command:parameter>
-      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="false" position="named" aliases="none">
+      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>ConsistencyLevel</maml:name>
         <maml:description>
           <maml:para>ConsistencyLevel header added to each individual batch item. Required when any batch item URL contains $search (Graph advanced query capabilities). Takes precedence over the same key in -Headers. Source: Advanced query capabilities on Microsoft Entra ID objects (https://learn.microsoft.com/en-us/graph/aad-advanced-queries)</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="false"></command:parameterValue>
+        <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
         <dev:type>
-          <maml:name></maml:name>
+          <maml:name>String</maml:name>
           <maml:uri />
         </dev:type>
         <dev:defaultValue>None</dev:defaultValue>
@@ -2194,7 +2217,8 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
         <maml:name>WhatIf</maml:name>
         <maml:description>
-          <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run.</maml:para>
+          <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run. The gate covers reads as well as writes: an all-GET batch is described and not sent, because even a read batch spends resource units, can be throttled, and emits objects into the pipeline. Invoke-MgxRequest makes the other choice and sends its reads under -WhatIf.</maml:para>
+          <maml:para>The count it names is what would be sent. Bodies are validated and checked for the redaction marker before the gate, so an item either of those refuses is left out of that count and named beside it - `PATCH 1 request via $batch; 2 refused` - and each refusal is written as the error record it is, under -WhatIf as without it: a refusal is not an action the gate governs.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
         <dev:type>
@@ -2232,7 +2256,7 @@ $report | Expand-MgxRelation -Uri '/users/{id}/licenseDetails' -As Licenses -IdP
           <maml:name>System.Collections.Hashtable</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>Per-request results with Url, Method, Status, and Body keys. Status says what became of the operation: an item the server answered keeps the status it answered with; an item whose chunk was POSTed and then refused carries the refusal's status (&gt;= 400), because its request went out and may have been applied; only an item in a chunk that was never POSTed gets status 0, and only those carry NotSent - another chunk of the batch failed, not necessarily one before it, since chunks can run in parallel. Body here is the RESPONSE body - for a failure that is the error envelope, not the request - so piping results straight back resubmits the wrong thing. Use Url and Method to rebuild the requests you want to retry.</maml:para>
+          <maml:para>Per-request results with Url, Method, Status, and Body keys. Status says what became of the operation: an item the server answered keeps the status it answered with; an item whose chunk was refused carries the refusal's status (&gt;= 400), which covers both a POST that went out unanswered and one an open circuit or a rate limiter stopped before it left, so read it as a write that may have been applied; only an item in a chunk that was never POSTed gets status 0, and only those carry NotSent - another chunk of the batch failed, not necessarily one before it, since chunks can run in parallel. Body here is the RESPONSE body - for a failure that is the error envelope, not the request - so piping results straight back resubmits the wrong thing. Use Url and Method to rebuild the requests you want to retry.</maml:para>
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -2322,9 +2346,12 @@ $users | ForEach-Object { "/users/$($_.id)" } | Invoke-MgxBatchRequest -Method D
         <maml:title>------ Example 8: Capture failures to a dead-letter file ------</maml:title>
         <dev:code>1..1000 | ForEach-Object {
     [PSCustomObject]@{ Url = "/users"; Method = "POST"; Body = @{ displayName = "User-$_"; mailNickname = "user$_"; userPrincipalName = "user$_@contoso.com"; passwordProfile = @{ password = "P@ss$(Get-Random -Minimum 10000)!" } } }
-} | Invoke-MgxBatchRequest -DeadLetterPath ./failed-users.jsonl</dev:code>
+} | Invoke-MgxBatchRequest -DeadLetterPath ./failed-users.jsonl
+
+# The redacted password field, as failed-users.jsonl holds it:
+# "passwordProfile":"***REDACTED***"</dev:code>
         <dev:remarks>
-          <maml:para>Creates 1000 users via batch. Any failures (status &gt;= 400) are appended to the JSONL dead-letter file with Url, Method, Body (passwords redacted), Status, and Error. Sensitive fields like passwordProfile are automatically replaced with *REDACTED *.</maml:para>
+          <maml:para>Creates 1000 users via batch. Anything the server answered with a status &gt;= 400 is appended to the JSONL dead-letter file, and so is anything that was never sent, which carries status 0; each line holds Timestamp, Url, Method, Status and Body, then Error where the item's own response carried an error message - a never-sent item has no response to read one from, and neither does an item of a refused chunk the server did not answer, so those lines end at Body. The Body is redacted by field name, by field value and by URL: a field whose name carries password, secret, credential, key, token, assertion, passphrase or connectionstring is replaced by the marker shown above, which is what passwordProfile gets here; a value that is a pre-authenticated URL is cut after its capability parameter, the way a -Debug trace cuts it; and a request whose own path names the secret it carries - resetPassword, uploadSecret, addKey - has its whole Body replaced by that marker instead, as does an item whose body could not be read for redaction.</maml:para>
         </dev:remarks>
       </command:example>
       <command:example>
@@ -2427,7 +2454,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>CheckpointPath</maml:name>
           <maml:description>
-            <maml:para>Path to a JSON checkpoint file for resumable pagination. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion.</maml:para>
+            <maml:para>Path to a JSON checkpoint file for resumable pagination. Consulted only by a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds it and ignores it. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, consults the checkpoint like any other. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion. Those writes are gated on their own: -WhatIf reads the file and leaves it exactly as it was, and -Confirm asks about it once per run that consults it, including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
           <dev:type>
@@ -2451,7 +2478,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="cf">
           <maml:name>Confirm</maml:name>
           <maml:description>
-            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+            <maml:para>Prompts before a write and not before a read. POST, PATCH, PUT and DELETE are confirmed - a direct request one prompt at a time, a fan-out over piped IDs one prompt for all of its items - and a GET is sent without a prompt, the same division -WhatIf makes. With -CheckpointPath there is one prompt more, but only on a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable, asked once per run before any page is fetched, covering the saves and the deletes of the checkpoint file itself - including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds the parameter and never reads it, so none of them adds a prompt. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, prompts the same as any other.</maml:para>
           </maml:description>
           <dev:type>
             <maml:name>SwitchParameter</maml:name>
@@ -2524,9 +2551,9 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
           <maml:description>
             <maml:para>Pipeline input for fan-out operations. Each value replaces the {id} placeholder in the URI template. Accepts string values or objects with an Id property.</maml:para>
           </maml:description>
-          <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
+          <command:parameterValue required="true" variableLength="false">Object</command:parameterValue>
           <dev:type>
-            <maml:name>String</maml:name>
+            <maml:name>Object</maml:name>
             <maml:uri />
           </dev:type>
           <dev:defaultValue>None</dev:defaultValue>
@@ -2669,7 +2696,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
           <maml:name>WhatIf</maml:name>
           <maml:description>
-            <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run.</maml:para>
+            <maml:para>Describes the write instead of sending it. Only writes are gated: POST, PATCH, PUT and DELETE, single or fanned out over piped IDs, are described and not sent. Reads are sent - a GET under -WhatIf connects, pages, spends resource units, can be throttled, and emits its objects - which is the PowerShell convention and what makes a dry run under $WhatIfPreference useful, since the gated writes are then previewed against real data. The checkpoint at -CheckpointPath is read and then left alone: a preview resumes from the position it finds, so it sends the same reads the run would rather than paging from the start, and it neither saves over that file nor deletes it, so the resume position is exactly where it was. Invoke-MgxBatchRequest makes the other choice and gates reads too.</maml:para>
           </maml:description>
           <dev:type>
             <maml:name>SwitchParameter</maml:name>
@@ -2732,7 +2759,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>CheckpointPath</maml:name>
         <maml:description>
-          <maml:para>Path to a JSON checkpoint file for resumable pagination. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion.</maml:para>
+          <maml:para>Path to a JSON checkpoint file for resumable pagination. Consulted only by a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds it and ignores it. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, consults the checkpoint like any other. On interruption (Ctrl+C), progress is saved. On re-run with the same checkpoint path, pagination resumes from where it left off. The checkpoint file is deleted on successful completion. Those writes are gated on their own: -WhatIf reads the file and leaves it exactly as it was, and -Confirm asks about it once per run that consults it, including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
         <dev:type>
@@ -2756,7 +2783,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="cf">
         <maml:name>Confirm</maml:name>
         <maml:description>
-          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          <maml:para>Prompts before a write and not before a read. POST, PATCH, PUT and DELETE are confirmed - a direct request one prompt at a time, a fan-out over piped IDs one prompt for all of its items - and a GET is sent without a prompt, the same division -WhatIf makes. With -CheckpointPath there is one prompt more, but only on a collection read carrying -All, -Top, -Skip, -Filter, -Search, -Sort or -CountVariable, asked once per run before any page is fetched, covering the saves and the deletes of the checkpoint file itself - including when several values are piped into a -Uri that carries no placeholder, which runs the request once per value; any other request - a plain collection GET, one with only -PageSize, a single-entity GET, a fan-out over two or more piped IDs, a write - binds the parameter and never reads it, so none of them adds a prompt. A single piped ID is not a fan-out: it is sent as a direct request and, on a collection read, prompts the same as any other.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
         <dev:type>
@@ -2830,9 +2857,9 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
         <maml:description>
           <maml:para>Pipeline input for fan-out operations. Each value replaces the {id} placeholder in the URI template. Accepts string values or objects with an Id property.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="false">Object</command:parameterValue>
         <dev:type>
-          <maml:name>String</maml:name>
+          <maml:name>Object</maml:name>
           <maml:uri />
         </dev:type>
         <dev:defaultValue>None</dev:defaultValue>
@@ -2984,7 +3011,7 @@ foreach ($url in $urls) { $url | Invoke-MgxBatchRequest }</dev:code>
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
         <maml:name>WhatIf</maml:name>
         <maml:description>
-          <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run.</maml:para>
+          <maml:para>Describes the write instead of sending it. Only writes are gated: POST, PATCH, PUT and DELETE, single or fanned out over piped IDs, are described and not sent. Reads are sent - a GET under -WhatIf connects, pages, spends resource units, can be throttled, and emits its objects - which is the PowerShell convention and what makes a dry run under $WhatIfPreference useful, since the gated writes are then previewed against real data. The checkpoint at -CheckpointPath is read and then left alone: a preview resumes from the position it finds, so it sends the same reads the run would rather than paging from the start, and it neither saves over that file nor deletes it, so the resume position is exactly where it was. Invoke-MgxBatchRequest makes the other choice and gates reads too.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
         <dev:type>
@@ -3248,7 +3275,7 @@ Import-Csv ./users.csv |
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>CircuitBreakerMinThroughput</maml:name>
           <maml:description>
-            <maml:para>Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 1-1000. Default: 40.</maml:para>
+            <maml:para>Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 2-1000. Default: 40. Two is the least the breaker will hold; a ratio over a single request is not a measurement.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">Int32</command:parameterValue>
           <dev:type>
@@ -3374,6 +3401,28 @@ Import-Csv ./users.csv |
           </dev:type>
           <dev:defaultValue>300</dev:defaultValue>
         </command:parameter>
+        <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
+          <maml:name>WhatIf</maml:name>
+          <maml:description>
+            <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run. Every path that changes an option - -Reset and each individual parameter alike - sits behind this same check, so nothing is changed under -WhatIf.</maml:para>
+          </maml:description>
+          <dev:type>
+            <maml:name>SwitchParameter</maml:name>
+            <maml:uri />
+          </dev:type>
+          <dev:defaultValue>False</dev:defaultValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="cf">
+          <maml:name>Confirm</maml:name>
+          <maml:description>
+            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          </maml:description>
+          <dev:type>
+            <maml:name>SwitchParameter</maml:name>
+            <maml:uri />
+          </dev:type>
+          <dev:defaultValue>False</dev:defaultValue>
+        </command:parameter>
       </command:syntaxItem>
     </command:syntax>
     <command:parameters>
@@ -3440,7 +3489,7 @@ Import-Csv ./users.csv |
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>CircuitBreakerMinThroughput</maml:name>
         <maml:description>
-          <maml:para>Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 1-1000. Default: 40.</maml:para>
+          <maml:para>Minimum number of requests in the sampling window before the circuit breaker evaluates failure ratio. Range: 2-1000. Default: 40. Two is the least the breaker will hold; a ratio over a single request is not a measurement.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">Int32</command:parameterValue>
         <dev:type>
@@ -3569,6 +3618,30 @@ Import-Csv ./users.csv |
         </dev:type>
         <dev:defaultValue>300</dev:defaultValue>
       </command:parameter>
+      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="wi">
+        <maml:name>WhatIf</maml:name>
+        <maml:description>
+          <maml:para>Shows what would happen if the cmdlet runs. The cmdlet is not run. Every path that changes an option - -Reset and each individual parameter alike - sits behind this same check, so nothing is changed under -WhatIf.</maml:para>
+        </maml:description>
+        <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
+        <dev:type>
+          <maml:name>SwitchParameter</maml:name>
+          <maml:uri />
+        </dev:type>
+        <dev:defaultValue>False</dev:defaultValue>
+      </command:parameter>
+      <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="cf">
+        <maml:name>Confirm</maml:name>
+        <maml:description>
+          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+        </maml:description>
+        <command:parameterValue required="false" variableLength="false">SwitchParameter</command:parameterValue>
+        <dev:type>
+          <maml:name>SwitchParameter</maml:name>
+          <maml:uri />
+        </dev:type>
+        <dev:defaultValue>False</dev:defaultValue>
+      </command:parameter>
     </command:parameters>
     <command:inputTypes>
       <command:inputType>
@@ -3661,7 +3734,7 @@ Import-Csv ./users.csv |
       <maml:para>Delta tokens are saved to the file specified by -DeltaPath and persist across successful completions. -CheckpointPath is different: it is an ephemeral mid-run resume position, saved at page boundaries while an enumeration is in flight and deleted the moment it completes. Use both on long enumerations - a killed 3-hour drive sync resumes where it stopped instead of starting over.</maml:para>
       <maml:para>Drive delta is fully supported: `/me/drive/root/delta`, `/drives/{id}/root/delta`, `/users/{id}/drive/root/delta`, and `/groups/{id}/drive/root/delta` all work, including drive-specific `-Prefer` behaviors and the drive form of `-Latest`.</maml:para>
       <maml:para>Items that no longer match the query appear with an `@removed` property containing `{"reason": "changed"}` (item moved out of scope or soft-deleted) or `{"reason": "deleted"}` (permanently deleted). Filter these with `Where-Object { -not $_.'@removed' }`. The completion message counts them separately.</maml:para>
-      <maml:para>Delta tokens expire after approximately 7 days for directory objects (users, groups, applications). When a token expires, Graph returns HTTP 410 Gone. Sync-MgxDelta handles this automatically by deleting the stale token (and any resume checkpoint) and performing a full re-sync with a warning.</maml:para>
+      <maml:para>Delta tokens expire after approximately 7 days for directory objects (users, groups, applications). When a token expires, Graph returns HTTP 410 Gone. Sync-MgxDelta handles this automatically by deleting the stale token (and this run's own resume checkpoint) and performing a full re-sync with a warning.</maml:para>
       <maml:para>Resume semantics are at-least-once: in pipeline mode the page in flight at a crash is re-emitted in full on resume; in JSONL mode mid-page checkpoints keep the window to at most 500 items. Deduplicate on `id` downstream if exact-once matters.</maml:para>
       <maml:para>Source: Use delta query to track changes in Microsoft Graph data (https://learn.microsoft.com/en-us/graph/delta-query-overview)</maml:para>
     </maml:description>
@@ -3699,7 +3772,8 @@ Import-Csv ./users.csv |
         <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
           <maml:name>CheckpointPath</maml:name>
           <maml:description>
-            <maml:para>Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. Must differ from -DeltaPath and -OutputFile.</maml:para>
+            <maml:para>Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. A completion and a 410 delete this run's own checkpoint; one they recognize as another sync's is left as it stands, for the sync that resumes from exactly it. Must differ from -DeltaPath and -OutputFile.</maml:para>
+            <maml:para>A run stops - with nothing written to the output, the checkpoint, a temp or the delta state - when the temp file the checkpoint names, or the output it would append to or replace, is open in another sync or cannot be opened for writing (a permission, a directory or a pipe at the path, a link that cannot be followed, a path too long for the file system, a socket, a directory above it this account cannot search), or when the copy it stages before promoting a temp fails, in which case both files are left as found: the changes it counts are in that file and this checkpoint is the only thing that counts them, and syncing anyway would write over both and advance the token past those changes. This holds whether the run would append, promote a temp, or re-enumerate from the last saved delta token after its temp vanished. The copy a promotion stages is written beside the output under a name the run creates itself, and the name is cleared first: a link, a pipe, a socket, a copy left by an interrupted promotion or a copy this account cannot open standing there is deleted and the removal reported as a warning, while a directory or a copy another run holds stops the run instead. Wait for that sync to finish, give this run its own -OutputFile and -CheckpointPath, or grant write access to that file - or to the directory holding it, where that is what the run names - and run again. A resumed or promoting run holds the output open for as long as it is appending, which is what stops a second run over the same command line; a run recovering a checkpoint older than 2.1 opens the output as it always has. On Linux and macOS a PowerShell reader of a held file fails with a sharing violation until the run ends, while tail and cat read it as before.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
           <dev:type>
@@ -3844,7 +3918,8 @@ Import-Csv ./users.csv |
       <command:parameter required="false" variableLength="true" globbing="false" pipelineInput="False" position="named" aliases="none">
         <maml:name>CheckpointPath</maml:name>
         <maml:description>
-          <maml:para>Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. Must differ from -DeltaPath and -OutputFile.</maml:para>
+          <maml:para>Path for the ephemeral mid-run resume checkpoint. Saved at page boundaries (and every 500 items in JSONL mode) while an enumeration is in flight; deleted on successful completion. Any event that invalidates the enumeration - HTTP 410 Gone, -FullSync, or a -Property/-Filter/-Prefer change - deletes it too. A completion and a 410 delete this run's own checkpoint; one they recognize as another sync's is left as it stands, for the sync that resumes from exactly it. Must differ from -DeltaPath and -OutputFile.</maml:para>
+          <maml:para>A run stops - with nothing written to the output, the checkpoint, a temp or the delta state - when the temp file the checkpoint names, or the output it would append to or replace, is open in another sync or cannot be opened for writing (a permission, a directory or a pipe at the path, a link that cannot be followed, a path too long for the file system, a socket, a directory above it this account cannot search), or when the copy it stages before promoting a temp fails, in which case both files are left as found: the changes it counts are in that file and this checkpoint is the only thing that counts them, and syncing anyway would write over both and advance the token past those changes. This holds whether the run would append, promote a temp, or re-enumerate from the last saved delta token after its temp vanished. The copy a promotion stages is written beside the output under a name the run creates itself, and the name is cleared first: a link, a pipe, a socket, a copy left by an interrupted promotion or a copy this account cannot open standing there is deleted and the removal reported as a warning, while a directory or a copy another run holds stops the run instead. Wait for that sync to finish, give this run its own -OutputFile and -CheckpointPath, or grant write access to that file - or to the directory holding it, where that is what the run names - and run again. A resumed or promoting run holds the output open for as long as it is appending, which is what stops a second run over the same command line; a run recovering a checkpoint older than 2.1 opens the output as it always has. On Linux and macOS a PowerShell reader of a held file fails with a sharing violation until the run ends, while tail and cat read it as before.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="false">String</command:parameterValue>
         <dev:type>
