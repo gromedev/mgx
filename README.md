@@ -263,6 +263,8 @@ The authentication module is intentionally not a declared dependency because Mgx
 ./build.ps1
 ```
 
+Install `platyPS` before building: `build.ps1` regenerates the compiled help and refuses to build without it.
+
 `Microsoft.Graph.Core`, `Polly.Core`, and `System.Threading.RateLimiting` are loaded into an isolated **Assembly Load Context** to avoid assembly-version conflicts with other PowerShell modules.
 
 ## License
